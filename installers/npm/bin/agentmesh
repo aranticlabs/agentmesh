@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+echo "AgentMesh npm wrapper is not published yet." >&2
+exit 1

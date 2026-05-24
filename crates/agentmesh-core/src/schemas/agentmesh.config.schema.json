@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentMesh configuration",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "runtimes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "mode": {
+            "enum": ["bidirectional", "merge", "read-only", "managed", "disabled"]
+          }
+        }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "conflict_strategy": {
+          "enum": ["auto"]
+        },
+        "rename_similarity_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vcs_throttle_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "watcher": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "idle_timeout_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "log_level": {
+          "enum": ["error", "warn", "info", "debug"]
+        },
+        "debounce_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "fallbacks": {
+      "type": "object"
+    },
+    "adapters": {
+      "type": "object"
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "fail_on_conflict": {
+          "type": "boolean"
+        },
+        "fail_on_capability_skip": {
+          "type": "boolean"
+        },
+        "require_clean_lock": {
+          "type": "boolean"
+        }
+      }
+    },
+    "hooks": {
+      "type": "object"
+    }
+  }
+}

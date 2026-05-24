@@ -18,12 +18,13 @@ docs/
 .env.*
 !.env.example
 !.env.sample
+agentmesh.config.local.yaml
 
 # Logs
 *.log
 logs/
 
-# Node (tooling: Prettier, etc.)
+# Node (installer wrappers)
 node_modules/
 
 # Rust
@@ -42,6 +43,10 @@ coverage/
 *.zip
 *.tar
 *.tar.gz
+
+# Runtime-local overlays
+.claude/settings.local.json
+.codex/hooks.json
 
 # AI
 .claude/

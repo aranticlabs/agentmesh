@@ -1,0 +1,13 @@
+[project]
+name = "agentmesh"
+version = "0.1.0"
+description = "pipx wrapper for the AgentMesh CLI binary"
+license = "MIT"
+requires-python = ">=3.9"
+
+[project.scripts]
+agentmesh = "agentmesh_wrapper:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

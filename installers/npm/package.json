@@ -1,0 +1,13 @@
+{
+  "name": "@aranticlabs/agentmesh",
+  "version": "0.1.0",
+  "description": "npm wrapper for the AgentMesh CLI binary",
+  "license": "MIT",
+  "bin": {
+    "agentmesh": "bin/agentmesh"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ]
+}

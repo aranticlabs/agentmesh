@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": true,
+  "packages": {
+    ".": {
+      "changelog-path": "CHANGELOG.md",
+      "component": "agentmesh-cli",
+      "package-name": "agentmesh-cli",
+      "release-type": "rust",
+      "tag-separator": "-"
+    }
+  }
+}
