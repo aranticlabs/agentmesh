@@ -2,16 +2,128 @@ name: release
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+      - "agentmesh-cli-v*"
 
 permissions:
   contents: write
+  id-token: write
   pull-requests: write
 
 jobs:
   release-please:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  build-artifacts:
+    if: startsWith(github.ref, 'refs/tags/')
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }} -p agentmesh-cli
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#agentmesh-cli-v}"
+          version="${version#v}"
+          name="agentmesh-v${version}-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          binary="target/${{ matrix.target }}/release/agentmesh"
+          suffix=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            binary="${binary}.exe"
+            suffix=".exe"
+          fi
+          cp "$binary" "dist/${name}/agentmesh${suffix}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd dist && 7z a "${name}.zip" "${name}")
+          else
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmesh-${{ matrix.target }}
+          path: dist/agentmesh-v*-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksum manifest
+        run: |
+          cd dist
+          sha256sum agentmesh-v* > SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign checksum manifest
+        run: cosign sign-blob --yes --output-signature dist/SHA256SUMS.sig dist/SHA256SUMS
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentmesh-v*
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+
+  package-publish-ready:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm pack ./installers/npm --dry-run
+      - run: python -m pip install build twine
+      - run: python -m build installers/pip
+      - run: python -m twine check installers/pip/dist/*

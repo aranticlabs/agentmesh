@@ -9,7 +9,17 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+agentmesh-core.workspace = true
+blake3 = "1.8.5"
+notify = "8"
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+sha2 = "0.11.0"
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

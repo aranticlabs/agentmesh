@@ -9,7 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+base64.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

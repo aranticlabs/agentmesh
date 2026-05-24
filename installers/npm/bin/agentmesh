@@ -1,5 +1,259 @@
 #!/usr/bin/env sh
 set -eu
 
-echo "AgentMesh npm wrapper is not published yet." >&2
-exit 1
+AGENTMESH_VERSION="${AGENTMESH_VERSION:-0.1.0}"
+AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentmesh/releases/download}"
+channel="${AGENTMESH_CHANNEL:-stable}"
+
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+binary_dir="${AGENTMESH_NPM_BINARY_DIR:-$script_dir/../agentmesh-bin}"
+binary_path="$binary_dir/agentmesh"
+
+sha256_file() {
+  file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return
+  fi
+  echo "no SHA-256 tool found; install sha256sum or shasum" >&2
+  exit 1
+}
+
+fetch_url() {
+  url="$1"
+  output="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+    return
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$output"
+    return
+  fi
+  echo "no download tool found; install curl or wget" >&2
+  exit 1
+}
+
+detect_platform() {
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+  case "$os" in
+    darwin) os="apple-darwin" ;;
+    linux) os="unknown-linux-gnu" ;;
+    msys*|mingw*|cygwin*) os="pc-windows-msvc" ;;
+    *) echo "unsupported operating system: $os" >&2; exit 1 ;;
+  esac
+  case "$arch" in
+    x86_64|amd64) arch="x86_64" ;;
+    arm64|aarch64) arch="aarch64" ;;
+    *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+  esac
+  printf '%s-%s\n' "$arch" "$os"
+}
+
+release_tag() {
+  case "$channel" in
+    stable) printf 'agentmesh-cli-v%s\n' "$AGENTMESH_VERSION" ;;
+    nightly) printf 'nightly\n' ;;
+    *) echo "unsupported channel: $channel" >&2; exit 64 ;;
+  esac
+}
+
+artifact_name() {
+  platform="$1"
+  case "$channel" in
+    stable) printf 'agentmesh-v%s-%s.tar.gz\n' "$AGENTMESH_VERSION" "$platform" ;;
+    nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
+  esac
+}
+
+manifest_hash_for() {
+  manifest="$1"
+  artifact="$2"
+  basename_artifact="$(basename "$artifact")"
+  awk -v artifact="$artifact" -v basename_artifact="$basename_artifact" '
+    $2 == artifact || $2 == basename_artifact || $2 == "./" basename_artifact || $2 == "*" basename_artifact {
+      print $1
+      exit
+    }
+  ' "$manifest"
+}
+
+verify_sha256() {
+  file="$1"
+  expected="$2"
+  actual="$(sha256_file "$file")"
+  if [ "$actual" != "$expected" ]; then
+    echo "sha256 mismatch for $file" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    exit 1
+  fi
+  echo "sha256 verified: $file"
+}
+
+verify_sha256sums() {
+  file="$1"
+  manifest="$2"
+  artifact="$3"
+  expected="$(manifest_hash_for "$manifest" "$artifact")"
+  if [ -z "$expected" ]; then
+    echo "artifact $artifact not found in $manifest" >&2
+    exit 1
+  fi
+  verify_sha256 "$file" "$expected"
+}
+
+verify_manifest_signature() {
+  manifest="$1"
+  signature="$2"
+  if ! command -v cosign >/dev/null 2>&1; then
+    echo "cosign is required to verify SHA256SUMS signatures" >&2
+    exit 1
+  fi
+  cosign verify-blob --signature "$signature" "$manifest" >/dev/null
+  echo "signature verified: $manifest"
+}
+
+make_workdir() {
+  base="${TMPDIR:-/tmp}"
+  workdir="$(mktemp -d "${base%/}/agentmesh-npm-install.XXXXXX")"
+  chmod 700 "$workdir"
+  printf '%s\n' "$workdir"
+}
+
+safe_extract_archive() {
+  archive="$1"
+  destination="$2"
+  if ! tar -tzf "$archive" | awk '
+    $0 == "" || $0 ~ /^\// || $0 ~ /(^|\/)\.\.(\/|$)/ {
+      print "unsafe archive member: " $0 > "/dev/stderr"
+      unsafe = 1
+    }
+    END { exit unsafe ? 1 : 0 }
+  '; then
+    echo "refusing to extract unsafe archive: $archive" >&2
+    exit 1
+  fi
+  mkdir -p "$destination"
+  tar -xzf "$archive" -C "$destination"
+}
+
+install_binary() {
+  platform="$(detect_platform)"
+  artifact="$(artifact_name "$platform")"
+  tag="$(release_tag)"
+  workdir="$(make_workdir)"
+  trap 'rm -rf "$workdir"' EXIT HUP INT TERM
+  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS" "$workdir/SHA256SUMS"
+  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.sig" "$workdir/SHA256SUMS.sig"
+  fetch_url "$AGENTMESH_BASE_URL/$tag/$artifact" "$workdir/$artifact"
+  verify_manifest_signature "$workdir/SHA256SUMS" "$workdir/SHA256SUMS.sig"
+  verify_sha256sums "$workdir/$artifact" "$workdir/SHA256SUMS" "$artifact"
+  mkdir -p "$workdir/extract" "$binary_dir"
+  safe_extract_archive "$workdir/$artifact" "$workdir/extract"
+  found="$workdir/extract/agentmesh"
+  if [ ! -f "$found" ] || [ -L "$found" ]; then
+    found="$(find "$workdir/extract" -type f -name agentmesh -print | head -n 1)"
+  fi
+  if [ -z "$found" ] || [ ! -f "$found" ]; then
+    echo "agentmesh binary not found in $artifact" >&2
+    exit 1
+  fi
+  chmod +x "$found"
+  cp "$found" "$binary_path"
+  echo "Installed agentmesh binary to $binary_path"
+}
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+AgentMesh npm wrapper
+
+Usage:
+  agentmesh --smoke
+  agentmesh --print-platform
+  agentmesh --print-url
+  agentmesh --verify-sha256 <file> <expected-sha256>
+  agentmesh --verify-sha256sums <file> <SHA256SUMS> <artifact-name>
+  agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig>
+  agentmesh --install
+  agentmesh --upgrade-help
+
+Without a wrapper flag, this command installs the signed, verified binary if needed and delegates to it.
+USAGE
+    exit 0
+    ;;
+  --smoke)
+    platform="$(detect_platform)"
+    echo "agentmesh npm wrapper smoke ok (platform=$platform artifact=$(artifact_name "$platform"))"
+    exit 0
+    ;;
+  --print-platform)
+    detect_platform
+    exit 0
+    ;;
+  --print-url)
+    platform="$(detect_platform)"
+    artifact="$(artifact_name "$platform")"
+    tag="$(release_tag)"
+    printf 'artifact_url=%s/%s/%s\n' "$AGENTMESH_BASE_URL" "$tag" "$artifact"
+    printf 'sha256sums_url=%s/%s/SHA256SUMS\n' "$AGENTMESH_BASE_URL" "$tag"
+    printf 'signature_url=%s/%s/SHA256SUMS.sig\n' "$AGENTMESH_BASE_URL" "$tag"
+    exit 0
+    ;;
+  --verify-sha256)
+    if [ "$#" -ne 3 ]; then
+      echo "usage: agentmesh --verify-sha256 <file> <expected-sha256>" >&2
+      exit 64
+    fi
+    verify_sha256 "$2" "$3"
+    exit 0
+    ;;
+  --verify-sha256sums)
+    if [ "$#" -ne 4 ]; then
+      echo "usage: agentmesh --verify-sha256sums <file> <SHA256SUMS> <artifact-name>" >&2
+      exit 64
+    fi
+    verify_sha256sums "$2" "$3" "$4"
+    exit 0
+    ;;
+  --verify-sha256sums-signature)
+    if [ "$#" -ne 3 ]; then
+      echo "usage: agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig>" >&2
+      exit 64
+    fi
+    verify_manifest_signature "$2" "$3"
+    exit 0
+    ;;
+  --install)
+    install_binary
+    exit 0
+    ;;
+  --upgrade-help)
+    cat <<'USAGE'
+AgentMesh upgrade flow:
+  1. Update @aranticlabs/agentmesh with npm.
+  2. Run `agentmesh upgrade` in each repository that has hooks installed.
+  3. Review the printed path and hash summary before continuing hook-driven sync.
+USAGE
+    exit 0
+    ;;
+  --version)
+    if [ -x "$binary_path" ]; then
+      exec "$binary_path" --version
+    fi
+    echo "agentmesh npm wrapper 0.1.0 (binary not installed)"
+    exit 0
+    ;;
+esac
+
+if [ ! -x "$binary_path" ]; then
+  install_binary
+fi
+
+exec "$binary_path" "$@"

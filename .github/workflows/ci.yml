@@ -10,7 +10,15 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
@@ -20,8 +28,34 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
+      - run: cargo build --workspace
+      - run: cargo bench --workspace --all-features --no-run
+
+  supply-chain:
+    name: supply-chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
       - run: cargo deny check
       - run: cargo audit
+
+  installers:
+    name: installer smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sh installers/install.sh --smoke
+      - run: sh installers/install.sh --upgrade-help
+      - run: sh installers/npm/bin/agentmesh --smoke
+      - run: sh installers/npm/bin/agentmesh --upgrade-help
+      - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --smoke
+      - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --upgrade-help
+      - run: ruby -c installers/homebrew-formula/agentmesh.rb

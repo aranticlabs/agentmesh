@@ -10,6 +10,11 @@ homepage.workspace = true
 
 [dependencies]
 agentmesh-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml = "0.0.12"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
 thiserror.workspace = true
 
 [lints]

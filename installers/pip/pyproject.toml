@@ -8,6 +8,9 @@ requires-python = ">=3.9"
 [project.scripts]
 agentmesh = "agentmesh_wrapper:main"
 
+[tool.agentmesh]
+smoke-command = "agentmesh --smoke"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

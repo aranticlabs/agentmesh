@@ -6,6 +6,10 @@
   "bin": {
     "agentmesh": "bin/agentmesh"
   },
+  "scripts": {
+    "postinstall": "bin/agentmesh --install",
+    "smoke": "bin/agentmesh --smoke"
+  },
   "files": [
     "bin",
     "README.md"

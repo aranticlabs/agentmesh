@@ -1,11 +1,76 @@
 //! User-facing configuration data structures.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use serde_yml::Value;
+use thiserror::Error;
 
 use crate::types::RuntimeName;
+
+const CONFIG_FILE_NAME: &str = "agentmesh.config.yaml";
+
+/// Configuration result type.
+pub type Result<T> = std::result::Result<T, ConfigError>;
+
+/// Errors produced while reading or validating configuration.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    /// Reading configuration failed.
+    #[error("failed to read config at {}", path.display())]
+    Read {
+        /// Config path.
+        path: PathBuf,
+        /// Source IO error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// YAML parsing failed.
+    #[error("failed to parse config at {}", path.display())]
+    Parse {
+        /// Config path.
+        path: PathBuf,
+        /// Source parse error.
+        #[source]
+        source: serde_yml::Error,
+    },
+    /// A known field has an invalid value.
+    #[error("invalid config value: {message}")]
+    InvalidValue {
+        /// Human-readable validation failure.
+        message: String,
+    },
+    /// JSON Schema validation failed.
+    #[error("config schema validation failed at {}: {message}", path.display())]
+    Schema {
+        /// Config path.
+        path: PathBuf,
+        /// Human-readable validation failure.
+        message: String,
+    },
+}
+
+/// Parsed project configuration with non-fatal compatibility warnings.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub struct ConfigLoad {
+    /// Parsed configuration.
+    pub config: AgentmeshConfig,
+    /// Unknown-key warnings.
+    pub warnings: Vec<ConfigWarning>,
+}
+
+/// Non-fatal configuration warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigWarning {
+    /// Dotted configuration path.
+    pub path: String,
+    /// Warning text.
+    pub message: String,
+}
 
 /// Current configuration schema version.
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
@@ -40,6 +105,30 @@ pub struct AgentmeshConfig {
     /// Hook installation preferences.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hooks: BTreeMap<RuntimeName, RuntimeHookConfig>,
+}
+
+impl AgentmeshConfig {
+    /// Validates cross-field constraints not handled by serde enum parsing.
+    pub fn validate(&self) -> Result<()> {
+        if self.version == Some(0) {
+            return Err(ConfigError::InvalidValue {
+                message: "version must be at least 1".to_string(),
+            });
+        }
+
+        if let Some(sync) = &self.sync {
+            if let Some(threshold) = sync.rename_similarity_threshold {
+                if !(0.0..=1.0).contains(&threshold) {
+                    return Err(ConfigError::InvalidValue {
+                        message: "sync.rename_similarity_threshold must be between 0.0 and 1.0"
+                            .to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Per-runtime configuration.
@@ -171,4 +260,316 @@ pub struct RuntimeHookConfig {
     /// Additional matcher expression fragments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matcher_extra: Option<String>,
+}
+
+/// Loads configuration from a repository root.
+pub fn load_config(repo_root: &Path) -> Result<ConfigLoad> {
+    let path = repo_root.join(CONFIG_FILE_NAME);
+    match fs::read_to_string(&path) {
+        Ok(contents) => parse_config_at(&contents, &path),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(ConfigLoad {
+            config: AgentmeshConfig::default(),
+            warnings: Vec::new(),
+        }),
+        Err(source) => Err(ConfigError::Read { path, source }),
+    }
+}
+
+/// Parses configuration from YAML text.
+pub fn parse_config(contents: &str) -> Result<ConfigLoad> {
+    parse_config_at(contents, Path::new(CONFIG_FILE_NAME))
+}
+
+fn parse_config_at(contents: &str, path: &Path) -> Result<ConfigLoad> {
+    let raw = serde_yml::from_str::<Value>(contents).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    validate_json_schema(&raw, path)?;
+    let warnings = collect_unknown_key_warnings(&raw);
+    let config =
+        serde_yml::from_str::<AgentmeshConfig>(contents).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    config.validate()?;
+
+    Ok(ConfigLoad { config, warnings })
+}
+
+fn validate_json_schema(raw: &Value, path: &Path) -> Result<()> {
+    let schema = serde_json::from_str::<JsonValue>(CONFIG_SCHEMA_JSON).map_err(|source| {
+        ConfigError::Schema {
+            path: path.to_path_buf(),
+            message: source.to_string(),
+        }
+    })?;
+    let instance = serde_json::to_value(raw).map_err(|source| ConfigError::Schema {
+        path: path.to_path_buf(),
+        message: source.to_string(),
+    })?;
+    let validator = jsonschema::validator_for(&schema).map_err(|source| ConfigError::Schema {
+        path: path.to_path_buf(),
+        message: source.to_string(),
+    })?;
+
+    validator
+        .validate(&instance)
+        .map_err(|source| ConfigError::Schema {
+            path: path.to_path_buf(),
+            message: source.to_string(),
+        })
+}
+
+fn collect_unknown_key_warnings(raw: &Value) -> Vec<ConfigWarning> {
+    let mut warnings = Vec::new();
+    collect_object_unknowns(
+        raw,
+        "",
+        &[
+            "version",
+            "runtimes",
+            "sync",
+            "watcher",
+            "fallbacks",
+            "adapters",
+            "ci",
+            "hooks",
+        ],
+        &mut warnings,
+    );
+
+    collect_runtime_maps(raw, "runtimes", &["mode"], &mut warnings);
+    collect_object_at(
+        raw,
+        "sync",
+        &[
+            "conflict_strategy",
+            "rename_similarity_threshold",
+            "vcs_throttle_ms",
+            "ignore",
+        ],
+        &mut warnings,
+    );
+    collect_object_at(
+        raw,
+        "watcher",
+        &["idle_timeout_minutes", "log_level", "debounce_ms"],
+        &mut warnings,
+    );
+    collect_object_at(
+        raw,
+        "ci",
+        &[
+            "fail_on_conflict",
+            "fail_on_capability_skip",
+            "require_clean_lock",
+        ],
+        &mut warnings,
+    );
+    collect_runtime_maps(raw, "hooks", &["enabled", "matcher_extra"], &mut warnings);
+
+    warnings
+}
+
+fn collect_object_at(raw: &Value, key: &str, allowed: &[&str], warnings: &mut Vec<ConfigWarning>) {
+    if let Some(value) = get_mapping_value(raw, key) {
+        collect_object_unknowns(value, key, allowed, warnings);
+    }
+}
+
+fn collect_runtime_maps(
+    raw: &Value,
+    section: &str,
+    allowed: &[&str],
+    warnings: &mut Vec<ConfigWarning>,
+) {
+    let Some(Value::Mapping(mapping)) = get_mapping_value(raw, section) else {
+        return;
+    };
+
+    for (runtime, value) in &mapping.map {
+        let Some(runtime) = runtime.as_str() else {
+            continue;
+        };
+        collect_object_unknowns(value, &format!("{section}.{runtime}"), allowed, warnings);
+    }
+}
+
+fn collect_object_unknowns(
+    raw: &Value,
+    prefix: &str,
+    allowed: &[&str],
+    warnings: &mut Vec<ConfigWarning>,
+) {
+    let Value::Mapping(mapping) = raw else {
+        return;
+    };
+
+    for (key, _) in &mapping.map {
+        let Some(key) = key.as_str() else {
+            continue;
+        };
+        if !allowed.contains(&key) {
+            let path = if prefix.is_empty() {
+                key.to_string()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            warnings.push(ConfigWarning {
+                path,
+                message: "unknown configuration key; sync will continue".to_string(),
+            });
+        }
+    }
+}
+
+fn get_mapping_value<'a>(raw: &'a Value, key: &str) -> Option<&'a Value> {
+    let Value::Mapping(mapping) = raw else {
+        return None;
+    };
+    mapping.get(Value::String(key.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentmeshConfig, CapabilityFallback, RuntimeMode, load_config, parse_config};
+    use crate::types::RuntimeName;
+
+    #[test]
+    fn missing_config_loads_defaults() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+
+        let loaded = match load_config(temp.path()) {
+            Ok(loaded) => loaded,
+            Err(error) => panic!("missing config should load defaults: {error}"),
+        };
+
+        assert_eq!(loaded.config, AgentmeshConfig::default());
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn parses_valid_config() {
+        let loaded = match parse_config(
+            r#"
+version: 1
+runtimes:
+  claude:
+    mode: read-only
+sync:
+  conflict_strategy: auto
+  rename_similarity_threshold: 0.8
+"#,
+        ) {
+            Ok(loaded) => loaded,
+            Err(error) => panic!("valid config should parse: {error}"),
+        };
+        let claude = match RuntimeName::new("claude") {
+            Ok(runtime) => runtime,
+            Err(error) => panic!("runtime name should be valid: {error}"),
+        };
+
+        assert_eq!(loaded.config.runtimes[&claude].mode, RuntimeMode::ReadOnly);
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_on_unknown_keys() {
+        let loaded = match parse_config(
+            r#"
+runtimez: {}
+runtimes:
+  codex:
+    mode: bidirectional
+    extra: true
+"#,
+        ) {
+            Ok(loaded) => loaded,
+            Err(error) => panic!("unknown keys should be warnings: {error}"),
+        };
+
+        let paths = loaded
+            .warnings
+            .iter()
+            .map(|warning| warning.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["runtimez", "runtimes.codex.extra"]);
+    }
+
+    #[test]
+    fn rejects_invalid_known_values() {
+        let error = parse_config(
+            r#"
+runtimes:
+  claude:
+    mode: bidirextional
+"#,
+        )
+        .err();
+
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn rejects_out_of_range_threshold() {
+        let error = parse_config(
+            r#"
+sync:
+  rename_similarity_threshold: 2.0
+"#,
+        )
+        .err();
+
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn rejects_schema_type_mismatches() {
+        let error = parse_config(
+            r#"
+sync:
+  ignore: false
+"#,
+        )
+        .err();
+
+        assert!(matches!(error, Some(super::ConfigError::Schema { .. })));
+    }
+
+    #[test]
+    fn parses_ci_strict_mode_and_fallback_settings() {
+        let loaded = match parse_config(
+            r#"
+ci:
+  fail_on_conflict: true
+  fail_on_capability_skip: true
+  require_clean_lock: true
+fallbacks:
+  codex:
+    image: warn
+"#,
+        ) {
+            Ok(loaded) => loaded,
+            Err(error) => panic!("strict CI config should parse: {error}"),
+        };
+        let codex = match RuntimeName::new("codex") {
+            Ok(runtime) => runtime,
+            Err(error) => panic!("runtime name should be valid: {error}"),
+        };
+        let Some(ci) = loaded.config.ci else {
+            panic!("CI config should be present");
+        };
+
+        assert_eq!(ci.fail_on_conflict, Some(true));
+        assert_eq!(ci.fail_on_capability_skip, Some(true));
+        assert_eq!(ci.require_clean_lock, Some(true));
+        assert_eq!(
+            loaded.config.fallbacks[&codex]["image"],
+            CapabilityFallback::Warn
+        );
+    }
 }
