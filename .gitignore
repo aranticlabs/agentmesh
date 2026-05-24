@@ -10,6 +10,9 @@
 *.swo
 *~
 
+# Documentation
+docs/
+
 # Environment and secrets
 .env
 .env.*
@@ -44,3 +47,5 @@ coverage/
 .claude/
 .codex/
 .cursor/
+CLAUDE.md
+AGENTS.md
