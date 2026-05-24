@@ -20,22 +20,17 @@
 *.log
 logs/
 
-# Dependencies
+# Node (tooling: Prettier, etc.)
 node_modules/
-vendor/
 
-# Build and cache output
+# Rust
+/target/
+**/*.rs.bk
+
+# Build and test output
 dist/
 build/
 coverage/
-.cache/
-.parcel-cache/
-.next/
-out/
-
-# .NET
-bin/
-obj/
 
 # Archives and temporary files
 *.tmp
