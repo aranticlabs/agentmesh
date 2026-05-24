@@ -17,6 +17,22 @@ BASE_URL = os.environ.get(
     "https://github.com/aranticlabs/agentmesh/releases/download",
 )
 CHANNEL = os.environ.get("AGENTMESH_CHANNEL", "stable")
+COSIGN_VERSION = os.environ.get("AGENTMESH_COSIGN_VERSION", "v2.6.3")
+COSIGN_CERTIFICATE_IDENTITY_REGEXP = os.environ.get(
+    "AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP",
+    r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*",
+)
+COSIGN_CERTIFICATE_OIDC_ISSUER = os.environ.get(
+    "AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER",
+    "https://token.actions.githubusercontent.com",
+)
+COSIGN_DIGESTS = {
+    "cosign-darwin-amd64": "5715d61dd00a9b6dcb344de14910b434145855b7f82690b94183c553ac1b68be",
+    "cosign-darwin-arm64": "ff497a698f125f3130b04f000b2cb0dd163bcaf00b5e776ef536035e6d0b3f3e",
+    "cosign-linux-amd64": "7c78a7f2efc00088bd788a758db6e0928e79f3e0eb83eb5d3c499ed98da4c4f4",
+    "cosign-linux-arm64": "b7c23659a50a59fd8eec44b87188e9062157d0c87796cac7b38727e5390c4917",
+    "cosign-windows-amd64.exe": "2264ea5867077b9e070161648e8c18544decac351f5f3a7edaea43c233ce2e36",
+}
 
 
 def detect_platform() -> str:
@@ -72,6 +88,10 @@ def signature_url(channel: str = CHANNEL) -> str:
     return f"{BASE_URL}/{release_tag(channel)}/SHA256SUMS.sig"
 
 
+def bundle_url(channel: str = CHANNEL) -> str:
+    return f"{BASE_URL}/{release_tag(channel)}/SHA256SUMS.bundle"
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -108,12 +128,140 @@ def verify_sha256sums(path: Path, manifest: Path, artifact: str) -> None:
     verify_sha256(path, expected)
 
 
-def verify_manifest_signature(manifest: Path, signature: Path) -> None:
-    cosign = shutil.which("cosign")
-    if cosign is None:
-        raise SystemExit("cosign is required to verify SHA256SUMS signatures")
+def cosign_artifact_name() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "darwin":
+        os_name = "darwin"
+    elif system == "linux":
+        os_name = "linux"
+    elif system.startswith(("msys", "mingw", "cygwin")) or system == "windows":
+        os_name = "windows"
+    else:
+        raise SystemExit(f"unsupported operating system for cosign: {system}")
+
+    if machine in {"x86_64", "amd64"}:
+        arch = "amd64"
+    elif machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    else:
+        raise SystemExit(f"unsupported architecture for cosign: {machine}")
+
+    suffix = ".exe" if os_name == "windows" else ""
+    return f"cosign-{os_name}-{arch}{suffix}"
+
+
+def cosign_expected_sha256(artifact: str) -> str:
+    override = os.environ.get("AGENTMESH_COSIGN_SHA256")
+    if override:
+        return override
+    if COSIGN_VERSION != "v2.6.3":
+        raise SystemExit(
+            "AGENTMESH_COSIGN_SHA256 is required when overriding AGENTMESH_COSIGN_VERSION"
+        )
+    expected = COSIGN_DIGESTS.get(artifact)
+    if expected is None:
+        raise SystemExit(f"unsupported cosign artifact: {artifact}")
+    return expected
+
+
+def verify_cosign_sha256(path: Path, expected: str) -> None:
+    actual = sha256_file(path)
+    if actual != expected:
+        raise SystemExit(
+            f"cosign sha256 mismatch for {path}\n  expected: {expected}\n  actual:   {actual}"
+        )
+
+
+def cosign_cache_dir() -> Path:
+    override = os.environ.get("AGENTMESH_COSIGN_DIR")
+    if override:
+        return Path(override)
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return Path(xdg_cache_home) / "agentmesh" / "cosign" / COSIGN_VERSION
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home) / ".cache" / "agentmesh" / "cosign" / COSIGN_VERSION
+    return Path(tempfile.gettempdir()) / "agentmesh-cosign" / COSIGN_VERSION
+
+
+def ensure_user_owned_path(path: Path, label: str) -> None:
+    if os.name == "nt" or not hasattr(os, "getuid"):
+        return
+    if path.stat().st_uid != os.getuid():
+        raise SystemExit(f"{label} is not owned by the current user: {path}")
+
+
+def prepare_cosign_cache_dir() -> Path:
+    cache_dir = cosign_cache_dir()
+    if cache_dir.is_symlink():
+        raise SystemExit(f"cosign cache directory must not be a symlink: {cache_dir}")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    ensure_user_owned_path(cache_dir, "cosign cache directory")
+    if os.name != "nt":
+        cache_dir.chmod(0o700)
+    return cache_dir
+
+
+def cosign_command() -> Path:
+    override = os.environ.get("AGENTMESH_COSIGN_BIN")
+    if override:
+        path = Path(override)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise SystemExit(f"AGENTMESH_COSIGN_BIN is not executable: {path}")
+        return path
+
+    found = shutil.which("cosign")
+    if found is not None:
+        return Path(found)
+
+    artifact = cosign_artifact_name()
+    expected = cosign_expected_sha256(artifact)
+    cache_dir = prepare_cosign_cache_dir()
+    destination = cache_dir / artifact
+    if destination.exists():
+        if destination.is_symlink() or not destination.is_file():
+            raise SystemExit(f"cosign cache entry is not a regular file: {destination}")
+        ensure_user_owned_path(destination, "cosign cache entry")
+        if sha256_file(destination) == expected:
+            destination.chmod(destination.stat().st_mode | 0o755)
+            return destination
+        destination.unlink()
+
+    base_url = os.environ.get(
+        "AGENTMESH_COSIGN_BASE_URL",
+        f"https://github.com/sigstore/cosign/releases/download/{COSIGN_VERSION}",
+    )
+    with tempfile.NamedTemporaryFile(dir=cache_dir, delete=False) as temp_file:
+        temp_path = Path(temp_file.name)
+    try:
+        download(f"{base_url}/{artifact}", temp_path)
+        verify_cosign_sha256(temp_path, expected)
+        temp_path.chmod(temp_path.stat().st_mode | 0o755)
+        temp_path.replace(destination)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def verify_manifest_signature(manifest: Path, signature: Path, bundle: Path) -> None:
+    cosign = cosign_command()
     subprocess.run(
-        [cosign, "verify-blob", "--signature", str(signature), str(manifest)],
+        [
+            str(cosign),
+            "verify-blob",
+            "--signature",
+            str(signature),
+            "--bundle",
+            str(bundle),
+            "--certificate-identity-regexp",
+            COSIGN_CERTIFICATE_IDENTITY_REGEXP,
+            "--certificate-oidc-issuer",
+            COSIGN_CERTIFICATE_OIDC_ISSUER,
+            str(manifest),
+        ],
         check=True,
         stdout=subprocess.DEVNULL,
     )
@@ -158,10 +306,12 @@ def install_binary() -> None:
         archive = temp_path / artifact
         manifest = temp_path / "SHA256SUMS"
         signature = temp_path / "SHA256SUMS.sig"
+        bundle = temp_path / "SHA256SUMS.bundle"
         download(f"{BASE_URL}/{tag}/SHA256SUMS", manifest)
         download(f"{BASE_URL}/{tag}/SHA256SUMS.sig", signature)
+        download(f"{BASE_URL}/{tag}/SHA256SUMS.bundle", bundle)
         download(f"{BASE_URL}/{tag}/{artifact}", archive)
-        verify_manifest_signature(manifest, signature)
+        verify_manifest_signature(manifest, signature, bundle)
         verify_sha256sums(archive, manifest, artifact)
         extract_dir = temp_path / "extract"
         extract_dir.mkdir()
@@ -189,7 +339,7 @@ def print_help() -> None:
         "  agentmesh --print-url\n"
         "  agentmesh --verify-sha256 <file> <expected-sha256>\n"
         "  agentmesh --verify-sha256sums <file> <SHA256SUMS> <artifact-name>\n"
-        "  agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig>\n"
+        "  agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig> <SHA256SUMS.bundle>\n"
         "  agentmesh --install\n"
         "  agentmesh --upgrade-help\n\n"
         "Without a wrapper flag, this command installs the signed, verified binary if needed and delegates to it."
@@ -212,6 +362,7 @@ def main() -> int:
         print(f"artifact_url={artifact_url()}")
         print(f"sha256sums_url={manifest_url()}")
         print(f"signature_url={signature_url()}")
+        print(f"bundle_url={bundle_url()}")
         return 0
     if args and args[0] == "--verify-sha256":
         if len(args) != 3:
@@ -229,13 +380,13 @@ def main() -> int:
         verify_sha256sums(Path(args[1]), Path(args[2]), args[3])
         return 0
     if args and args[0] == "--verify-sha256sums-signature":
-        if len(args) != 3:
+        if len(args) != 4:
             print(
-                "usage: agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig>",
+                "usage: agentmesh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig> <SHA256SUMS.bundle>",
                 file=sys.stderr,
             )
             return 64
-        verify_manifest_signature(Path(args[1]), Path(args[2]))
+        verify_manifest_signature(Path(args[1]), Path(args[2]), Path(args[3]))
         return 0
     if args == ["--install"]:
         install_binary()

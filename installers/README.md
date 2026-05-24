@@ -8,8 +8,8 @@ This directory holds packaging wrappers around the single AgentMesh binary.
 - `install.sh` contains the curl installer entry point.
 
 The wrappers are release installers. They resolve the current platform archive, verify it against
-the published `SHA256SUMS` manifest, verify the manifest signature with cosign, and then install or
-delegate to the single binary.
+the published `SHA256SUMS` manifest, verify the manifest signature and Sigstore bundle with cosign,
+and then install or delegate to the single binary.
 
 Smoke checks are available without network access:
 

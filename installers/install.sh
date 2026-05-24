@@ -3,6 +3,9 @@ set -eu
 
 AGENTMESH_VERSION="${AGENTMESH_VERSION:-0.1.0}"
 AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentmesh/releases/download}"
+COSIGN_VERSION="${AGENTMESH_COSIGN_VERSION:-v2.6.3}"
+COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*}"
+COSIGN_CERTIFICATE_OIDC_ISSUER="${AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 sha256_file() {
   file="$1"
@@ -94,6 +97,11 @@ signature_url() {
   printf '%s/%s/SHA256SUMS.sig\n' "$AGENTMESH_BASE_URL" "$tag"
 }
 
+bundle_url() {
+  tag="$(release_tag)"
+  printf '%s/%s/SHA256SUMS.bundle\n' "$AGENTMESH_BASE_URL" "$tag"
+}
+
 manifest_hash_for() {
   manifest="$1"
   artifact="$2"
@@ -131,15 +139,143 @@ verify_sha256sums() {
   verify_sha256 "$file" "$expected"
 }
 
+cosign_artifact_name() {
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+  case "$os" in
+    darwin) os="darwin" ;;
+    linux) os="linux" ;;
+    msys*|mingw*|cygwin*) os="windows" ;;
+    *) echo "unsupported operating system for cosign: $os" >&2; exit 1 ;;
+  esac
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) echo "unsupported architecture for cosign: $arch" >&2; exit 1 ;;
+  esac
+  suffix=""
+  if [ "$os" = "windows" ]; then
+    suffix=".exe"
+  fi
+  printf 'cosign-%s-%s%s\n' "$os" "$arch" "$suffix"
+}
+
+cosign_expected_sha256() {
+  artifact="$1"
+  if [ -n "${AGENTMESH_COSIGN_SHA256:-}" ]; then
+    printf '%s\n' "$AGENTMESH_COSIGN_SHA256"
+    return
+  fi
+  if [ "$COSIGN_VERSION" != "v2.6.3" ]; then
+    echo "AGENTMESH_COSIGN_SHA256 is required when overriding AGENTMESH_COSIGN_VERSION" >&2
+    exit 1
+  fi
+  case "$artifact" in
+    cosign-darwin-amd64) printf '%s\n' "5715d61dd00a9b6dcb344de14910b434145855b7f82690b94183c553ac1b68be" ;;
+    cosign-darwin-arm64) printf '%s\n' "ff497a698f125f3130b04f000b2cb0dd163bcaf00b5e776ef536035e6d0b3f3e" ;;
+    cosign-linux-amd64) printf '%s\n' "7c78a7f2efc00088bd788a758db6e0928e79f3e0eb83eb5d3c499ed98da4c4f4" ;;
+    cosign-linux-arm64) printf '%s\n' "b7c23659a50a59fd8eec44b87188e9062157d0c87796cac7b38727e5390c4917" ;;
+    cosign-windows-amd64.exe) printf '%s\n' "2264ea5867077b9e070161648e8c18544decac351f5f3a7edaea43c233ce2e36" ;;
+    *)
+      echo "unsupported cosign artifact: $artifact" >&2
+      exit 1
+      ;;
+  esac
+}
+
+verify_cosign_sha256() {
+  file="$1"
+  expected="$2"
+  actual="$(sha256_file "$file")"
+  if [ "$actual" != "$expected" ]; then
+    echo "cosign sha256 mismatch for $file" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    exit 1
+  fi
+}
+
+cosign_cache_dir() {
+  if [ -n "${AGENTMESH_COSIGN_DIR:-}" ]; then
+    printf '%s\n' "$AGENTMESH_COSIGN_DIR"
+    return
+  fi
+  if [ -n "${XDG_CACHE_HOME:-}" ]; then
+    printf '%s/agentmesh/cosign/%s\n' "$XDG_CACHE_HOME" "$COSIGN_VERSION"
+    return
+  fi
+  if [ -n "${HOME:-}" ]; then
+    printf '%s/.cache/agentmesh/cosign/%s\n' "$HOME" "$COSIGN_VERSION"
+    return
+  fi
+  printf '%s/agentmesh-cosign/%s\n' "${TMPDIR:-/tmp}" "$COSIGN_VERSION"
+}
+
+prepare_cosign_cache_dir() {
+  cosign_dir="$(cosign_cache_dir)"
+  if [ -L "$cosign_dir" ]; then
+    echo "cosign cache directory must not be a symlink: $cosign_dir" >&2
+    exit 1
+  fi
+  mkdir -p "$cosign_dir"
+  if [ ! -O "$cosign_dir" ]; then
+    echo "cosign cache directory is not owned by the current user: $cosign_dir" >&2
+    exit 1
+  fi
+  chmod 700 "$cosign_dir"
+  printf '%s\n' "$cosign_dir"
+}
+
+cosign_command() {
+  if [ -n "${AGENTMESH_COSIGN_BIN:-}" ]; then
+    if [ ! -x "$AGENTMESH_COSIGN_BIN" ]; then
+      echo "AGENTMESH_COSIGN_BIN is not executable: $AGENTMESH_COSIGN_BIN" >&2
+      exit 1
+    fi
+    printf '%s\n' "$AGENTMESH_COSIGN_BIN"
+    return
+  fi
+  if command -v cosign >/dev/null 2>&1; then
+    command -v cosign
+    return
+  fi
+  artifact="$(cosign_artifact_name)"
+  expected="$(cosign_expected_sha256 "$artifact")"
+  cosign_dir="$(prepare_cosign_cache_dir)"
+  cosign_bin="$cosign_dir/$artifact"
+  if [ -e "$cosign_bin" ]; then
+    if [ -L "$cosign_bin" ] || [ ! -f "$cosign_bin" ] || [ ! -O "$cosign_bin" ]; then
+      echo "cosign cache entry is not a regular user-owned file: $cosign_bin" >&2
+      exit 1
+    fi
+    if [ "$(sha256_file "$cosign_bin")" = "$expected" ]; then
+      chmod +x "$cosign_bin"
+      printf '%s\n' "$cosign_bin"
+      return
+    fi
+    rm -f "$cosign_bin"
+  fi
+  cosign_base="${AGENTMESH_COSIGN_BASE_URL:-https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION}"
+  temp_bin="$cosign_bin.tmp.$$"
+  rm -f "$temp_bin"
+  fetch_url "$cosign_base/$artifact" "$temp_bin"
+  verify_cosign_sha256 "$temp_bin" "$expected"
+  chmod +x "$temp_bin"
+  mv "$temp_bin" "$cosign_bin"
+  printf '%s\n' "$cosign_bin"
+}
+
 verify_manifest_signature() {
   manifest="$1"
   signature="$2"
-  if ! command -v cosign >/dev/null 2>&1; then
-    echo "cosign is required to verify SHA256SUMS signatures" >&2
-    echo "install cosign, then retry" >&2
-    exit 1
-  fi
-  cosign verify-blob --signature "$signature" "$manifest" >/dev/null
+  bundle="$3"
+  cosign="$(cosign_command)"
+  "$cosign" verify-blob \
+    --signature "$signature" \
+    --bundle "$bundle" \
+    --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
+    --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
+    "$manifest" >/dev/null
 }
 
 install_dir_default() {
@@ -188,10 +324,12 @@ install_archive() {
   archive="$workdir/$artifact"
   manifest="$workdir/SHA256SUMS"
   signature="$workdir/SHA256SUMS.sig"
+  bundle="$workdir/SHA256SUMS.bundle"
 
   fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS" "$manifest"
   fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.sig" "$signature"
-  verify_manifest_signature "$manifest" "$signature"
+  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.bundle" "$bundle"
+  verify_manifest_signature "$manifest" "$signature" "$bundle"
   fetch_url "$AGENTMESH_BASE_URL/$tag/$artifact" "$archive"
   verify_sha256sums "$archive" "$manifest" "$artifact"
 
@@ -223,6 +361,8 @@ verify_file=""
 verify_expected=""
 verify_manifest_file=""
 verify_artifact=""
+verify_signature_file=""
+verify_bundle_file=""
 install_dir="$(install_dir_default)"
 
 while [ "$#" -gt 0 ]; do
@@ -268,6 +408,17 @@ while [ "$#" -gt 0 ]; do
       verify_artifact="$4"
       shift 4
       ;;
+    --verify-sha256sums-signature)
+      if [ "$#" -lt 4 ]; then
+        echo "usage: install.sh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig> <SHA256SUMS.bundle>" >&2
+        exit 64
+      fi
+      command="verify-sha256sums-signature"
+      verify_manifest_file="$2"
+      verify_signature_file="$3"
+      verify_bundle_file="$4"
+      shift 4
+      ;;
     --channel=stable)
       channel="stable"
       shift
@@ -298,6 +449,7 @@ Usage:
   install.sh --print-url [--channel=stable|--channel=nightly]
   install.sh --verify-sha256 <file> <expected-sha256>
   install.sh --verify-sha256sums <file> <SHA256SUMS> <artifact-name>
+  install.sh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig> <SHA256SUMS.bundle>
   install.sh --upgrade-help
   install.sh --smoke
 
@@ -329,6 +481,7 @@ USAGE
     printf 'artifact_url=%s\n' "$(artifact_url)"
     printf 'sha256sums_url=%s\n' "$(manifest_url)"
     printf 'signature_url=%s\n' "$(signature_url)"
+    printf 'bundle_url=%s\n' "$(bundle_url)"
     exit 0
     ;;
   verify-sha256)
@@ -337,6 +490,10 @@ USAGE
     ;;
   verify-sha256sums)
     verify_sha256sums "$verify_file" "$verify_manifest_file" "$verify_artifact"
+    exit 0
+    ;;
+  verify-sha256sums-signature)
+    verify_manifest_signature "$verify_manifest_file" "$verify_signature_file" "$verify_bundle_file"
     exit 0
     ;;
 esac

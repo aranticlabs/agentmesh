@@ -57,6 +57,67 @@ jobs:
           node-version: "22"
       - run: sh installers/install.sh --smoke
       - run: sh installers/install.sh --upgrade-help
+      - name: Verify installer signature paths
+        run: |
+          python_bin="$(command -v python || command -v python3)"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/base"
+          cosign_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          cosign_arch="$(uname -m)"
+          case "$cosign_os" in
+            darwin) cosign_os="darwin" ;;
+            linux) cosign_os="linux" ;;
+            msys*|mingw*|cygwin*) cosign_os="windows" ;;
+          esac
+          case "$cosign_arch" in
+            x86_64|amd64) cosign_arch="amd64" ;;
+            arm64|aarch64) cosign_arch="arm64" ;;
+          esac
+          cosign_suffix=""
+          if [ "$cosign_os" = "windows" ]; then
+            cosign_suffix=".exe"
+          fi
+          cosign_artifact="$tmp/base/cosign-$cosign_os-$cosign_arch$cosign_suffix"
+          cat >"$cosign_artifact" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          test "$#" -eq 10
+          test "$1" = "verify-blob"
+          test "$2" = "--signature"
+          test -f "$3"
+          test "$4" = "--bundle"
+          test -f "$5"
+          test "$6" = "--certificate-identity-regexp"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$8" = "--certificate-oidc-issuer"
+          test "$9" = "https://token.actions.githubusercontent.com"
+          test -f "${10}"
+          EOF
+          chmod +x "$cosign_artifact"
+          if command -v sha256sum >/dev/null 2>&1; then
+            cosign_sha="$(sha256sum "$cosign_artifact" | awk '{print $1}')"
+          else
+            cosign_sha="$(shasum -a 256 "$cosign_artifact" | awk '{print $1}')"
+          fi
+          printf 'placeholder  agentmesh.tar.gz\n' >"$tmp/SHA256SUMS"
+          : >"$tmp/SHA256SUMS.sig"
+          : >"$tmp/SHA256SUMS.bundle"
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-pip" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
+          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
+            echo "install.sh accepted a mismatched cosign checksum" >&2
+            exit 1
+          fi
+          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
+            echo "npm wrapper accepted a mismatched cosign checksum" >&2
+            exit 1
+          fi
+          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-pip" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
+            echo "pip wrapper accepted a mismatched cosign checksum" >&2
+            exit 1
+          fi
       - run: node --check installers/npm/scripts/install.js
       - run: AGENTMESH_NPM_POSTINSTALL_SMOKE=1 node installers/npm/scripts/install.js
       - run: sh installers/npm/bin/agentmesh --smoke
