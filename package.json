@@ -25,5 +25,11 @@
   "homepage": "https://github.com/aranticlabs/agentmesh#readme",
   "devDependencies": {
     "prettier": "^3.8.3"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "trailingComma": "all",
+    "proseWrap": "preserve"
   }
 }
