@@ -37,6 +37,40 @@ fn run_agentmesh_with_home(repo: &Path, cache: &Path, home: &Path, args: &[&str]
     }
 }
 
+fn run_agentmesh_with_env(
+    repo: &Path,
+    cache: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Output {
+    let mut command = Command::new(agentmesh_bin());
+    command
+        .arg("--cwd")
+        .arg(repo)
+        .env("AGENTMESH_CACHE_DIR", cache);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    match command.args(args).output() {
+        Ok(output) => output,
+        Err(error) => panic!("agentmesh command should run: {error}"),
+    }
+}
+
+fn run_agentmesh_without_no_color(repo: &Path, cache: &Path, args: &[&str]) -> Output {
+    match Command::new(agentmesh_bin())
+        .arg("--cwd")
+        .arg(repo)
+        .env("AGENTMESH_CACHE_DIR", cache)
+        .env_remove("NO_COLOR")
+        .args(args)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("agentmesh command should run: {error}"),
+    }
+}
+
 fn spawn_agentmesh_with_home(repo: &Path, cache: &Path, home: &Path, args: &[&str]) -> Child {
     match Command::new(agentmesh_bin())
         .arg("--cwd")
@@ -96,6 +130,68 @@ fn parse_stdout_json(output: &Output) -> Value {
             "stdout should be JSON: {error}; stdout {}",
             String::from_utf8_lossy(&output.stdout)
         ),
+    }
+}
+
+fn push_command_output(
+    surface: &mut String,
+    label: &str,
+    output: &Output,
+    repo: &Path,
+    cache: &Path,
+    home: &Path,
+) {
+    surface.push_str("## ");
+    surface.push_str(label);
+    surface.push('\n');
+    surface.push_str(&format!("exit: {:?}\n", output.status.code()));
+    surface.push_str("stdout:\n");
+    surface.push_str(&normalize_snapshot_text(
+        &String::from_utf8_lossy(&output.stdout),
+        repo,
+        cache,
+        home,
+    ));
+    surface.push_str("\nstderr:\n");
+    surface.push_str(&normalize_snapshot_text(
+        &String::from_utf8_lossy(&output.stderr),
+        repo,
+        cache,
+        home,
+    ));
+    surface.push_str("\n\n");
+}
+
+fn normalize_snapshot_text(text: &str, repo: &Path, cache: &Path, home: &Path) -> String {
+    let normalized = text
+        .replace(&agentmesh_bin().display().to_string(), "<agentmesh-bin>")
+        .replace(&repo.display().to_string(), "<repo>")
+        .replace(&cache.display().to_string(), "<cache>")
+        .replace(&home.display().to_string(), "<home>");
+    normalize_hex_runs(&normalized)
+}
+
+fn normalize_hex_runs(text: &str) -> String {
+    let mut output = String::new();
+    let mut run = String::new();
+    for character in text.chars() {
+        if character.is_ascii_hexdigit() {
+            run.push(character);
+            continue;
+        }
+        push_normalized_hex_run(&mut output, &run);
+        run.clear();
+        output.push(character);
+    }
+    push_normalized_hex_run(&mut output, &run);
+    output
+}
+
+fn push_normalized_hex_run(output: &mut String, run: &str) {
+    match run.len() {
+        16 => output.push_str("<cache-key>"),
+        64 => output.push_str("<sha256>"),
+        _ => output.push_str(run),
     }
 }
 
@@ -206,6 +302,177 @@ fn fixture_repo_with_both_runtimes(repo: &Path) {
         repo.join(".codex/agents/triage.toml"),
         "name = \"triage\"\ninstructions = \"Triage issues.\"\n",
     );
+}
+
+fn fixture_conflict_repo(repo: &Path, cache: &Path) {
+    write(
+        repo.join(".ai/skills/recover/SKILL.md"),
+        "---\nname: recover\n---\nCurrent body.\n",
+    );
+    write(
+        repo.join("agentmesh.lock"),
+        r#"version: 1
+schema: 1
+entities:
+  skill:recover:
+    type: skill
+    locations:
+      .ai: skills/recover/SKILL.md
+    canonical_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    emitted_native_sha256: {}
+    pending_conflict_resolution: true
+"#,
+    );
+    let layout = match agentmesh_core::state::CacheLayout::new(cache, repo) {
+        Ok(layout) => layout,
+        Err(error) => panic!("cache layout should build: {error}"),
+    };
+    if let Err(error) = layout.ensure_dirs() {
+        panic!("cache dirs should be created: {error}");
+    }
+    write(
+        layout
+            .conflicts_dir
+            .join("skill:recover")
+            .join("claude-unix-2.md"),
+        "---\nname: recover\n---\nRestored body.\n",
+    );
+}
+
+#[test]
+fn representative_command_outputs_are_snapshotted() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let home = temp.path().join("home");
+    fixture_repo_with_both_runtimes(&repo);
+    write(repo.join(".git/hooks/.keep"), "");
+
+    let mut surface = String::new();
+    let commands: Vec<(&str, Vec<&str>)> = vec![
+        ("status", vec!["--no-color", "status"]),
+        ("status verbose", vec!["--no-color", "-v", "status"]),
+        ("scan", vec!["--no-color", "scan"]),
+        (
+            "init dry-run",
+            vec!["--no-color", "init", "--dry-run", "--skip-hooks", "--yes"],
+        ),
+        (
+            "install runtime dry-run",
+            vec!["--no-color", "install", "--runtime", "claude", "--dry-run"],
+        ),
+        (
+            "install git pre-commit dry-run",
+            vec!["--no-color", "install", "--git-pre-commit", "--dry-run"],
+        ),
+        ("sync check", vec!["--no-color", "sync", "--check"]),
+        ("diff", vec!["--no-color", "diff"]),
+        ("apply", vec!["--no-color", "apply"]),
+        ("doctor", vec!["--no-color", "doctor"]),
+        (
+            "upgrade dry-run",
+            vec!["--no-color", "upgrade", "--dry-run"],
+        ),
+        (
+            "uninstall dry-run",
+            vec!["--no-color", "uninstall", "--dry-run"],
+        ),
+        ("reserved graph", vec!["--no-color", "graph"]),
+        ("reserved adapter", vec!["--no-color", "adapter", "list"]),
+    ];
+    for (label, args) in commands {
+        let output = run_agentmesh(&repo, &cache, &args);
+        push_command_output(&mut surface, label, &output, &repo, &cache, &home);
+    }
+
+    let conflict_repo = temp.path().join("conflict-repo");
+    let conflict_cache = temp.path().join("conflict-cache");
+    fixture_conflict_repo(&conflict_repo, &conflict_cache);
+    let restore = run_agentmesh(
+        &conflict_repo,
+        &conflict_cache,
+        &[
+            "--no-color",
+            "restore",
+            "skill:recover",
+            "--from",
+            "claude",
+            "--at",
+            "unix-2",
+            "--dry-run",
+        ],
+    );
+    push_command_output(
+        &mut surface,
+        "restore dry-run",
+        &restore,
+        &conflict_repo,
+        &conflict_cache,
+        &home,
+    );
+    let ack = run_agentmesh(
+        &conflict_repo,
+        &conflict_cache,
+        &["--no-color", "ack", "--yes"],
+    );
+    push_command_output(
+        &mut surface,
+        "ack",
+        &ack,
+        &conflict_repo,
+        &conflict_cache,
+        &home,
+    );
+
+    let watch_repo = temp.path().join("watch-repo");
+    let watch_cache = temp.path().join("watch-cache");
+    write(watch_repo.join(".git/.keep"), "");
+    let watch = run_agentmesh_with_home(
+        &watch_repo,
+        &watch_cache,
+        &home,
+        &[
+            "--no-color",
+            "watch",
+            "--register-as-service",
+            "--persistent",
+            "--yes",
+        ],
+    );
+    push_command_output(
+        &mut surface,
+        "watch register",
+        &watch,
+        &watch_repo,
+        &watch_cache,
+        &home,
+    );
+
+    let reconcile_repo = temp.path().join("reconcile-repo");
+    let reconcile_cache = temp.path().join("reconcile-cache");
+    write(reconcile_repo.join("AGENTS.md"), "Instructions\n");
+    write(
+        reconcile_repo.join("agentmesh.lock"),
+        "<<<<<<< ours\nversion: 1\n=======\nversion: 1\n>>>>>>> theirs\n",
+    );
+    let reconcile = run_agentmesh(
+        &reconcile_repo,
+        &reconcile_cache,
+        &["--no-color", "reconcile-lock"],
+    );
+    push_command_output(
+        &mut surface,
+        "reconcile-lock",
+        &reconcile,
+        &reconcile_repo,
+        &reconcile_cache,
+        &home,
+    );
+
+    insta::assert_snapshot!("representative_command_outputs", surface);
 }
 
 #[test]
@@ -381,6 +648,10 @@ fn claude_hook_trigger_imports_new_skill_and_drains_pending_record() {
         "---\nname: base\n---\nBase skill.\n",
     );
     write(repo.join(".codex/.keep"), "");
+    write(
+        repo.join("agentmesh.config.yaml"),
+        "ci:\n  fail_on_conflict: true\n",
+    );
     assert_success(&run_agentmesh(
         &repo,
         &cache,
@@ -629,6 +900,7 @@ fn uninstall_purge_removes_repository_state_after_cleaning_hooks() {
     assert_success(&uninstall);
     assert!(!repo.join(".ai").exists());
     assert!(!repo.join("agentmesh.lock").exists());
+    assert!(!repo.join("agentmesh.config.yaml").exists());
     if repo.join(".claude/settings.local.json").exists() {
         assert!(!read(repo.join(".claude/settings.local.json")).contains("claude-hook"));
     }
@@ -871,9 +1143,9 @@ fn git_pre_commit_install_is_additive_and_executable() {
     assert_success(&install);
     let hook = repo.join(".git/hooks/pre-commit");
     let contents = read(&hook);
-    assert!(contents.starts_with("#!/bin/sh\nset -eu\n"));
-    assert!(contents.contains("AgentMesh"));
-    assert!(contents.contains("sync --check --silent"));
+    assert!(contents.starts_with("#!/usr/bin/env bash\n"));
+    assert!(contents.contains("managed by AgentMesh"));
+    assert!(contents.contains("sync --check --trigger=git-pre-commit --silent"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -883,6 +1155,122 @@ fn git_pre_commit_install_is_additive_and_executable() {
         };
         assert_ne!(metadata.permissions().mode() & 0o111, 0);
     }
+}
+
+#[test]
+fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let original = "#!/bin/sh\necho user-hook\n";
+    write(repo.join(".git/hooks/pre-commit"), original);
+
+    let install = run_agentmesh(
+        &repo,
+        &cache,
+        &["--silent", "install", "--git-pre-commit", "--yes"],
+    );
+
+    assert_success(&install);
+    let hook = repo.join(".git/hooks/pre-commit");
+    let saved = repo.join(".git/hooks/pre-commit.agentmesh-saved");
+    let contents = read(&hook);
+    assert!(contents.contains("pre-commit.agentmesh-saved"));
+    assert!(contents.contains("git-pre-commit"));
+    assert_eq!(read(&saved), original);
+
+    let ownership = match find_named_file(&cache, "hook-ownership.json") {
+        Some(path) => read(path),
+        None => panic!("git pre-commit ownership should be recorded"),
+    };
+    assert!(ownership.contains("git-pre-commit"));
+
+    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "uninstall", "--yes"]);
+
+    assert_success(&uninstall);
+    assert_eq!(read(&hook), original);
+    assert!(!saved.exists());
+}
+
+#[test]
+fn git_pre_commit_install_refuses_known_framework_hooks_without_force() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(
+        repo.join(".git/hooks/pre-commit"),
+        "#!/bin/sh\n# File generated by pre-commit: https://pre-commit.com\n",
+    );
+
+    let install = run_agentmesh(&repo, &cache, &["install", "--git-pre-commit", "--yes"]);
+
+    assert_exit_code(&install, 64);
+    assert!(!read(repo.join(".git/hooks/pre-commit")).contains("AgentMesh"));
+}
+
+#[test]
+fn no_color_environment_disables_explicit_color_output() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join(".claude/.keep"), "");
+
+    let status = run_agentmesh_with_env(
+        &repo,
+        &cache,
+        &["--color", "always", "status"],
+        &[("NO_COLOR", "1")],
+    );
+
+    assert_success(&status);
+    assert!(!String::from_utf8_lossy(&status.stdout).contains("\x1b["));
+}
+
+#[test]
+fn color_always_emits_ansi_output() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join(".claude/.keep"), "");
+
+    let status = run_agentmesh_without_no_color(&repo, &cache, &["--color", "always", "status"]);
+
+    assert_success(&status);
+    assert!(String::from_utf8_lossy(&status.stdout).contains("\x1b["));
+}
+
+#[test]
+fn status_and_doctor_exit_nonzero_for_pending_conflicts() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    fixture_conflict_repo(&repo, &cache);
+
+    let status = run_agentmesh(&repo, &cache, &["--silent", "status"]);
+    let doctor = run_agentmesh(&repo, &cache, &["--silent", "doctor"]);
+    let doctor_json = run_agentmesh(&repo, &cache, &["doctor", "--json"]);
+
+    assert_exit_code(&status, 1);
+    assert_exit_code(&doctor, 1);
+    assert_exit_code(&doctor_json, 1);
+    let value = parse_stdout_json(&doctor_json);
+    assert_eq!(value["core_health"]["pending_conflicts"], 1);
+    assert_eq!(value["core_health"]["pending_syncs"], 0);
 }
 
 #[test]
@@ -1005,12 +1393,18 @@ fn service_registration_writes_platform_definition() {
         Some(path) => path,
         None => panic!("service definition should be written"),
     };
-    let contents = read(service);
+    let contents = read(&service);
     assert!(contents.contains("--cwd"));
     assert!(contents.contains(&repo.display().to_string()));
     assert!(contents.contains("watch"));
     assert!(contents.contains("--foreground"));
     assert!(contents.contains("--persistent"));
+
+    let uninstall =
+        run_agentmesh_with_home(&repo, &cache, &home, &["--silent", "uninstall", "--yes"]);
+
+    assert_success(&uninstall);
+    assert!(!service.exists());
 }
 
 #[test]

@@ -1,0 +1,258 @@
+---
+source: crates/agentmesh-cli/tests/cli_flows.rs
+expression: surface
+---
+## status
+exit: Some(0)
+stdout:
+AgentMesh 0.1.0   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
+  hooks:    claude ✗   codex ✗
+  watcher:  stopped (drain: idle)
+  pending:  0 in queue
+  conflicts: 0 unresolved
+  integrity: not pinned
+
+stderr:
+
+
+## status verbose
+exit: Some(0)
+stdout:
+AgentMesh 0.1.0   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
+  hooks:    claude ✗   codex ✗
+  watcher:  stopped (drain: idle)
+  pending:  0 in queue
+  conflicts: 0 unresolved
+  integrity: not pinned
+  runtime details:
+    claude  present=true hook=false entities=5
+    codex   present=true hook=false entities=3
+
+stderr:
+
+
+## scan
+exit: Some(0)
+stdout:
+Detected runtimes:
+  ✓ claude  (.claude, .claude/skills, .claude/agents, CLAUDE.md)
+  ✓ codex   (.codex, .codex/skills, .codex/agents)
+
+Detected entities:
+  instructions:root            (claude)
+  skill:ops-runbook            (claude)
+  skill:security-review        (claude)
+  subagent:code-reviewer       (claude)
+  subagent:planner             (claude)
+  skill:api-design             (codex)
+  skill:release-notes          (codex)
+  subagent:triage              (codex)
+
+8 runtime entity view(s) detected.
+
+stderr:
+
+
+## init dry-run
+exit: Some(0)
+stdout:
+→ Init dry run:
+  Repository: <repo>
+  Detected runtimes: claude, codex
+  Canonical instructions: default
+  Accept prompts: true
+  Install hooks: false
+  No repository or machine-local files were changed.
+
+stderr:
+
+
+## install runtime dry-run
+exit: Some(0)
+stdout:
+→ Would install claude sync hook:
+  Overlay: <repo>/.claude/settings.local.json
+  Command: <agentmesh-bin> sync --trigger=claude-hook --silent
+
+stderr:
+
+
+## install git pre-commit dry-run
+exit: Some(0)
+stdout:
+→ Would install git pre-commit hook at <repo>/.git/hooks/pre-commit
+  Command: agentmesh sync --check --trigger=git-pre-commit --silent
+
+stderr:
+
+
+## sync check
+exit: Some(1)
+stdout:
+sync-check: drift detected
+  entities_changed=8
+  pending_conflicts=0
+  capability_skipped=0
+  resolution=auto-resolvable by `agentmesh sync`
+
+stderr:
+
+
+## diff
+exit: Some(1)
+stdout:
+→ Sync would update repository state:
+  entities: 8
+  review state: <cache>/<cache-key>/reviewed-diff.json
+↗ Run `agentmesh apply` to write these changes.
+
+stderr:
+
+
+## apply
+exit: Some(0)
+stdout:
+sync: changed=true
+  entities_changed=8
+  pending_enqueued=8
+  pending_drained=8
+
+stderr:
+
+
+## doctor
+exit: Some(0)
+stdout:
+AgentMesh 0.1.0
+Repository: <repo>
+
+Adapters:
+  claude  ✓ detected   bundled, protocol 1, entities [instructions, skill, subagent]
+  codex   ✓ detected   bundled, protocol 1, entities [instructions, skill, subagent]
+
+Hook integrity:
+  Status:           pinned
+  Cache:            <cache>/<cache-key>
+  Binary path:      <agentmesh-bin> (pinned)
+  Pinned sha256:    <sha256>
+  Running binary:   <agentmesh-bin>
+  Running sha256:   <sha256>
+  Hook entry style: pinned-absolute for Claude and Codex when installed
+
+Hook entries:
+  claude  ✗ pinned-absolute   (.claude/settings.local.json)
+  codex   ✗ pinned-absolute   (.codex/hooks.json)
+  Ownership: not recorded
+  Ownership file: <cache>/<cache-key>/hook-ownership.json
+
+Watcher daemon:
+  Status:           stopped
+  Drain:            idle
+  Log:              <cache>/<cache-key>/watcher.log
+
+Lockfile:
+  Status:           present
+  Schema:           1 (current)
+  Entities:         8
+  Pending conflicts: 0
+
+Core findings:
+  entities: 8
+  entities_in_sync: 8
+  entities_out_of_sync: 0
+  pending_conflicts: 0
+  pending_syncs: 0
+  failed_pending_syncs: 0
+  capability_skips: 0
+  cache_root: <cache>/<cache-key>
+  integrity: match
+  integrity_mode: pinned-absolute
+  integrity_pinned_binary: <agentmesh-bin>
+  integrity_pinned_sha256: <sha256>
+  integrity_current_binary: <agentmesh-bin>
+  integrity_current_sha256: <sha256>
+  integrity_version: 0.1.0
+  adapter_claude: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
+  adapter_codex: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
+  adapter_coverage_instructions: claude,codex
+  adapter_coverage_skill: claude,codex
+  adapter_coverage_subagent: claude,codex
+  hooks: none
+  preserved_conflict_entities: 0
+  pending_conflict_entities: 0
+  watcher_pid: <cache>/<cache-key>/watcher.pid
+  watcher_log: <cache>/<cache-key>/watcher.log
+  network: disabled
+
+stderr:
+
+
+## upgrade dry-run
+exit: Some(0)
+stdout:
+→ Would repin integrity to <agentmesh-bin>
+→ Would rewrite recorded runtime hook entries to the current binary path
+
+stderr:
+
+
+## uninstall dry-run
+exit: Some(0)
+stdout:
+⚠ hook-ownership.json missing. Cannot determine which entries to remove.
+
+stderr:
+
+
+## reserved graph
+exit: Some(64)
+stdout:
+
+stderr:
+⚠ This command is available in AgentMesh v0.2+.
+
+
+## reserved adapter
+exit: Some(64)
+stdout:
+
+stderr:
+⚠ This command is available in AgentMesh v0.2+.
+
+
+## restore dry-run
+exit: Some(0)
+stdout:
+restore dry-run:
+  from: <cache>/<cache-key>/conflicts/skill:recover/claude-unix-2.md
+  to:   <repo>/.ai/skills/recover/SKILL.md
+  at:   unix-2
+  No files were changed.
+
+stderr:
+
+
+## ack
+exit: Some(0)
+stdout:
+ack: changed=true
+
+stderr:
+
+
+## watch register
+exit: Some(0)
+stdout:
+Started watcher daemon.
+  State: <cache>/<cache-key>/watcher.pid
+  Log:   <cache>/<cache-key>/watcher.log
+
+stderr:
+
+
+## reconcile-lock
+exit: Some(0)
+stdout:
+reconcile-lock: changed=true
+
+stderr:

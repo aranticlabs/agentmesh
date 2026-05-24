@@ -102,6 +102,24 @@ pub struct SyncSummary {
 pub struct DoctorReport {
     /// Machine-readable health findings.
     pub findings: Vec<String>,
+    /// Typed health counters for callers that need stable decisions.
+    pub health: DoctorHealth,
+}
+
+/// Stable health counters returned by doctor.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[must_use]
+pub struct DoctorHealth {
+    /// Number of entities whose current files differ from the lockfile.
+    pub entities_out_of_sync: usize,
+    /// Number of entities still requiring conflict acknowledgement.
+    pub pending_conflicts: usize,
+    /// Number of pending sync records waiting to drain.
+    pub pending_syncs: usize,
+    /// Number of pending sync records that exhausted retries.
+    pub failed_pending_syncs: usize,
+    /// Number of entities skipped because no runtime can represent them.
+    pub capability_skips: usize,
 }
 
 /// Options for restoring a preserved entity version.

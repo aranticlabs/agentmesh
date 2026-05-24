@@ -710,6 +710,26 @@ fn stop_with_cache_root(repo_root: &Path, cache_root: &Path) -> Result<()> {
                 )?,
             }
         }
+        if let Some(service_file) = record.service_file.take() {
+            match fs::remove_file(&service_file) {
+                Ok(()) => append_log(
+                    &layout.log_file,
+                    "unregister-service",
+                    json!({
+                        "path": service_file,
+                    }),
+                )?,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(WatcherError::Io {
+                        action: "remove watcher service",
+                        path: service_file,
+                        source,
+                    });
+                }
+            }
+        }
+        record.service_kind = None;
         record.state = STATE_STOPPED.to_string();
         record.updated_at = timestamp_string();
         write_record(&layout, &record)?;

@@ -75,6 +75,7 @@ enum SyncTrigger {
     Cli,
     ClaudeHook,
     CodexHook,
+    GitPreCommit,
     Watcher,
     Other(String),
 }
@@ -85,6 +86,7 @@ impl SyncTrigger {
             None | Some("cli") => Self::Cli,
             Some("claude-hook") => Self::ClaudeHook,
             Some("codex-hook") => Self::CodexHook,
+            Some("git-pre-commit") => Self::GitPreCommit,
             Some("watcher") => Self::Watcher,
             Some(other) => Self::Other(other.to_string()),
         }
@@ -96,7 +98,9 @@ impl SyncTrigger {
                 format!("unknown sync trigger: {value}"),
                 AgentmeshExitCode::Usage,
             )),
-            Self::Cli | Self::ClaudeHook | Self::CodexHook | Self::Watcher => Ok(()),
+            Self::Cli | Self::ClaudeHook | Self::CodexHook | Self::GitPreCommit | Self::Watcher => {
+                Ok(())
+            }
         }
     }
 }
@@ -131,9 +135,15 @@ enum Command {
     Uninstall(UninstallCommand),
     /// Recover from a textual lockfile merge conflict.
     ReconcileLock,
+    /// Reserved for a future entity graph view.
+    #[command(hide = true)]
+    Graph(ReservedCommand),
+    /// Reserved for future external adapter management.
+    #[command(hide = true)]
+    Adapter(ReservedCommand),
     /// Run a bundled adapter over stdio.
     #[command(name = "__adapter", hide = true)]
-    Adapter(AdapterCommand),
+    InternalAdapter(AdapterCommand),
 }
 
 #[derive(Debug, Args)]
@@ -313,6 +323,12 @@ struct AdapterCommand {
     stdio: bool,
 }
 
+#[derive(Debug, Args)]
+struct ReservedCommand {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
+}
+
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -361,7 +377,10 @@ fn run(cli: Cli) -> Result<AgentmeshExitCode> {
         Some(Command::Upgrade(command)) => handle_upgrade(&context, command),
         Some(Command::Uninstall(command)) => handle_uninstall(&context, command),
         Some(Command::ReconcileLock) => handle_reconcile_lock(&context),
-        Some(Command::Adapter(command)) => handle_adapter(command),
+        Some(Command::Graph(command)) | Some(Command::Adapter(command)) => {
+            handle_reserved_v02(&context, command)
+        }
+        Some(Command::InternalAdapter(command)) => handle_adapter(command),
         None => {
             let mut command = Cli::command();
             command.print_help().map_err(CliError::from_io)?;
@@ -383,6 +402,56 @@ struct CliContext {
 impl CliContext {
     fn touch(&self) {
         let _ = (self.silent, self.no_color, self.color, self.verbose);
+    }
+
+    fn color_enabled(&self) -> bool {
+        if self.no_color || std::env::var_os("NO_COLOR").is_some() {
+            return false;
+        }
+        match self.color {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => std::io::stdout().is_terminal(),
+        }
+    }
+
+    fn paint(&self, style: OutputStyle, text: &str) -> String {
+        if !self.color_enabled() {
+            return text.to_string();
+        }
+        format!("\x1b[{}m{text}\x1b[0m", style.code())
+    }
+
+    fn verbose(&self) -> bool {
+        self.verbose > 0
+    }
+
+    fn debug(&self) -> bool {
+        self.verbose > 1
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputStyle {
+    Success,
+    Danger,
+    Warning,
+    Info,
+}
+
+const GIT_PRE_COMMIT_RUNTIME: &str = "git-pre-commit";
+const GIT_PRE_COMMIT_HOOK: &str = ".git/hooks/pre-commit";
+const GIT_PRE_COMMIT_SAVED: &str = ".git/hooks/pre-commit.agentmesh-saved";
+const GIT_PRE_COMMIT_MARKER: &str = "managed by AgentMesh";
+
+impl OutputStyle {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Success => "32",
+            Self::Danger => "31",
+            Self::Warning => "33",
+            Self::Info => "36",
+        }
     }
 }
 
@@ -566,6 +635,7 @@ fn core_sync_options(options: &ParsedSyncOptions) -> agentmesh_core::SyncOptions
             SyncTrigger::Cli => "cli".to_string(),
             SyncTrigger::ClaudeHook => "claude-hook".to_string(),
             SyncTrigger::CodexHook => "codex-hook".to_string(),
+            SyncTrigger::GitPreCommit => "git-pre-commit".to_string(),
             SyncTrigger::Watcher => "watcher".to_string(),
             SyncTrigger::Other(value) => value.clone(),
         }),
@@ -576,7 +646,11 @@ fn core_sync_options(options: &ParsedSyncOptions) -> agentmesh_core::SyncOptions
 }
 
 fn handle_status(context: &CliContext, command: StatusCommand) -> Result<AgentmeshExitCode> {
-    let snapshot = inspect_repo(context)?;
+    let snapshot = if context.verbose() || command.json {
+        inspect_repo(context)?
+    } else {
+        inspect_status_repo(context)?
+    };
     if command.json {
         println!("{}", status_json(&snapshot)?);
         return Ok(snapshot_exit_code(&snapshot));
@@ -596,7 +670,7 @@ fn handle_scan(context: &CliContext, command: ScanCommand) -> Result<AgentmeshEx
     }
 
     if !context.silent {
-        print_scan(&snapshot);
+        print_scan(context, &snapshot);
     }
     Ok(AgentmeshExitCode::Success)
 }
@@ -668,7 +742,10 @@ fn resolve_init_instruction_choice(
     }
 
     if !context.silent {
-        println!("⚠ Detected divergent project instructions:");
+        println!(
+            "{} Detected divergent project instructions:",
+            context.paint(OutputStyle::Warning, "⚠")
+        );
         println!("    AGENTS.md {}", instruction_preview(&agents));
         println!("    CLAUDE.md {}", instruction_preview(&claude));
         println!("  Pick the canonical version:");
@@ -753,7 +830,7 @@ fn print_init_dry_run(context: &CliContext, options: &ParsedInitOptions) -> Resu
     }
 
     let snapshot = inspect_repo(context)?;
-    println!("→ Init dry run:");
+    println!("{} Init dry run:", context.paint(OutputStyle::Info, "→"));
     println!("  Repository: {}", snapshot.repo_root.display());
     println!(
         "  Detected runtimes: {}",
@@ -871,10 +948,27 @@ fn handle_diff(context: &CliContext, command: DiffCommand) -> Result<AgentmeshEx
             .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))?
         );
     } else if !context.silent {
-        println!("diff: changed={}", summary.changed);
-        println!("  entities_changed={}", summary.entities_changed);
-        if let Some(path) = &review_path {
-            println!("  review_state={}", path.display());
+        if summary.changed {
+            println!(
+                "{} Sync would update repository state:",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!("  entities: {}", summary.entities_changed);
+            if summary.pending_conflicts > 0 {
+                println!("  pending conflicts: {}", summary.pending_conflicts);
+            }
+            if summary.capability_skipped > 0 {
+                println!("  capability skips: {}", summary.capability_skipped);
+            }
+            if let Some(path) = &review_path {
+                println!("  review state: {}", path.display());
+            }
+            println!(
+                "{} Run `agentmesh apply` to write these changes.",
+                context.paint(OutputStyle::Info, "↗")
+            );
+        } else {
+            println!("{} No sync changes detected.", check(context, true));
         }
     }
 
@@ -962,7 +1056,7 @@ fn handle_doctor(context: &CliContext, command: DoctorCommand) -> Result<Agentme
     }
 
     if !context.silent {
-        print_doctor(&snapshot);
+        print_doctor(context, &snapshot);
     }
     Ok(snapshot_exit_code(&snapshot))
 }
@@ -1193,9 +1287,9 @@ fn handle_uninstall(context: &CliContext, command: UninstallCommand) -> Result<A
     .map_err(map_core_error)?;
     if !context.silent {
         for removed in summary.removed_entries {
-            println!("    ✓ Removed {removed}");
+            println!("    {} Removed {removed}", check(context, true));
         }
-        println!("✓ AgentMesh local wiring removed.");
+        println!("{} AgentMesh local wiring removed.", check(context, true));
         if !command.purge {
             println!("  agentmesh.lock and canonical content are retained.");
         }
@@ -1234,6 +1328,18 @@ fn handle_adapter(command: AdapterCommand) -> Result<AgentmeshExitCode> {
     .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))
 }
 
+fn handle_reserved_v02(
+    context: &CliContext,
+    command: ReservedCommand,
+) -> Result<AgentmeshExitCode> {
+    let _ = command.args.len();
+    eprintln!(
+        "{} This command is available in AgentMesh v0.2+.",
+        context.paint(OutputStyle::Warning, "⚠")
+    );
+    Ok(AgentmeshExitCode::Usage)
+}
+
 #[derive(Debug)]
 struct RepoSnapshot {
     repo_root: PathBuf,
@@ -1246,6 +1352,7 @@ struct RepoSnapshot {
     runtimes: Vec<RuntimeSnapshot>,
     unknown_runtimes: Vec<PathBuf>,
     core_findings: Vec<String>,
+    core_health: Option<agentmesh_core::DoctorHealth>,
 }
 
 #[derive(Debug)]
@@ -1340,6 +1447,38 @@ struct RestorePlan {
 }
 
 fn inspect_repo(context: &CliContext) -> Result<RepoSnapshot> {
+    inspect_repo_with_options(
+        context,
+        InspectOptions {
+            import_entities: true,
+            include_core_findings: true,
+            include_unknown_runtimes: true,
+        },
+    )
+}
+
+fn inspect_status_repo(context: &CliContext) -> Result<RepoSnapshot> {
+    inspect_repo_with_options(
+        context,
+        InspectOptions {
+            import_entities: false,
+            include_core_findings: false,
+            include_unknown_runtimes: false,
+        },
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InspectOptions {
+    import_entities: bool,
+    include_core_findings: bool,
+    include_unknown_runtimes: bool,
+}
+
+fn inspect_repo_with_options(
+    context: &CliContext,
+    options: InspectOptions,
+) -> Result<RepoSnapshot> {
     context.touch();
     let repo_name = context
         .repo_root
@@ -1348,11 +1487,22 @@ fn inspect_repo(context: &CliContext) -> Result<RepoSnapshot> {
         .unwrap_or("repo")
         .to_string();
     let cache = cache_layout(&context.repo_root)?;
-    let runtimes = vec![inspect_claude(context)?, inspect_codex(context)?];
+    let runtimes = vec![
+        inspect_claude(context, options.import_entities)?,
+        inspect_codex(context, options.import_entities)?,
+    ];
     let hook_ownership = inspect_hook_ownership(context, &cache, &runtimes)?;
-    let core_findings = agentmesh_core::doctor(&context.repo_root)
-        .map(|report| report.findings)
-        .map_err(map_core_error)?;
+    let (core_findings, core_health) = if options.include_core_findings {
+        let report = agentmesh_core::doctor(&context.repo_root).map_err(map_core_error)?;
+        (report.findings, Some(report.health))
+    } else {
+        (Vec::new(), None)
+    };
+    let unknown_runtimes = if options.include_unknown_runtimes {
+        inspect_unknown_runtime_dirs(&context.repo_root)?
+    } else {
+        Vec::new()
+    };
 
     Ok(RepoSnapshot {
         repo_root: context.repo_root.clone(),
@@ -1363,8 +1513,9 @@ fn inspect_repo(context: &CliContext) -> Result<RepoSnapshot> {
         watcher: inspect_watcher(&context.repo_root),
         pending_syncs: inspect_pending_syncs(&cache)?,
         runtimes,
-        unknown_runtimes: inspect_unknown_runtime_dirs(&context.repo_root)?,
+        unknown_runtimes,
         core_findings,
+        core_health,
     })
 }
 
@@ -1480,6 +1631,17 @@ fn snapshot_exit_code(snapshot: &RepoSnapshot) -> AgentmeshExitCode {
         || !snapshot.hook_ownership.issues.is_empty()
     {
         AgentmeshExitCode::Integrity
+    } else if snapshot.lockfile.pending_conflicts > 0
+        || snapshot.pending_syncs > 0
+        || snapshot.core_health.as_ref().is_some_and(|health| {
+            health.entities_out_of_sync > 0
+                || health.failed_pending_syncs > 0
+                || health.capability_skips > 0
+                || health.pending_conflicts > 0
+                || health.pending_syncs > 0
+        })
+    {
+        AgentmeshExitCode::Drift
     } else {
         AgentmeshExitCode::Success
     }
@@ -1533,10 +1695,19 @@ fn inspect_hook_ownership(
     let mut issues = Vec::new();
     for (runtime, entry) in &ownership.0 {
         let overlay_path = context.repo_root.join(&entry.overlay_file);
-        let trigger = format!("{}-hook", runtime.as_str());
-        let hook_present = fs::read_to_string(&overlay_path)
-            .map(|content| content.contains(&trigger))
-            .unwrap_or(false);
+        let hook_present = if runtime.as_str() == GIT_PRE_COMMIT_RUNTIME {
+            fs::read_to_string(&overlay_path)
+                .map(|content| {
+                    content.contains(GIT_PRE_COMMIT_MARKER)
+                        && content.contains("--trigger=git-pre-commit")
+                })
+                .unwrap_or(false)
+        } else {
+            let trigger = format!("{}-hook", runtime.as_str());
+            fs::read_to_string(&overlay_path)
+                .map(|content| content.contains(&trigger))
+                .unwrap_or(false)
+        };
         if !hook_present {
             issues.push(format!(
                 "{} ownership is recorded but no matching hook was found in {}",
@@ -1649,24 +1820,26 @@ fn inspect_watcher(repo_root: &Path) -> WatcherSnapshot {
     }
 }
 
-fn inspect_claude(context: &CliContext) -> Result<RuntimeSnapshot> {
+fn inspect_claude(context: &CliContext, import_entities: bool) -> Result<RuntimeSnapshot> {
     inspect_runtime(
         context,
         "claude",
         ".claude",
         ".claude/settings.local.json",
         "claude-hook",
+        import_entities,
         agentmesh_adapter_claude::ClaudeAdapter,
     )
 }
 
-fn inspect_codex(context: &CliContext) -> Result<RuntimeSnapshot> {
+fn inspect_codex(context: &CliContext, import_entities: bool) -> Result<RuntimeSnapshot> {
     let mut runtime = inspect_runtime(
         context,
         "codex",
         ".codex",
         ".codex/hooks.json",
         "codex-hook",
+        import_entities,
         agentmesh_adapter_codex::CodexAdapter,
     )?;
     if runtime.hook_installed {
@@ -1683,6 +1856,7 @@ fn inspect_runtime<A>(
     runtime_dir_name: &str,
     overlay: &str,
     hook_trigger: &str,
+    import_entities: bool,
     adapter: A,
 ) -> Result<RuntimeSnapshot>
 where
@@ -1695,7 +1869,7 @@ where
     let mut entities = Vec::new();
     let mut import_error = None;
 
-    if detected.present {
+    if detected.present && import_entities {
         match adapter.import(ImportRequest {
             canonical_dir: context.repo_root.join(".ai"),
             runtime_dir,
@@ -1760,6 +1934,7 @@ fn status_json(snapshot: &RepoSnapshot) -> Result<String> {
         "pending_syncs": snapshot.pending_syncs,
         "unknown_runtimes": snapshot.unknown_runtimes,
         "core_findings": snapshot.core_findings,
+        "core_health": core_health_json(snapshot.core_health.as_ref()),
         "runtimes": snapshot.runtimes.iter().map(runtime_json).collect::<Vec<_>>(),
     }))
     .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))
@@ -1804,8 +1979,22 @@ fn doctor_json(snapshot: &RepoSnapshot) -> Result<String> {
         "pending_syncs": snapshot.pending_syncs,
         "unknown_runtimes": snapshot.unknown_runtimes,
         "core_findings": snapshot.core_findings,
+        "core_health": core_health_json(snapshot.core_health.as_ref()),
     }))
     .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))
+}
+
+fn core_health_json(health: Option<&agentmesh_core::DoctorHealth>) -> serde_json::Value {
+    match health {
+        Some(health) => json!({
+            "entities_out_of_sync": health.entities_out_of_sync,
+            "pending_conflicts": health.pending_conflicts,
+            "pending_syncs": health.pending_syncs,
+            "failed_pending_syncs": health.failed_pending_syncs,
+            "capability_skips": health.capability_skips,
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 fn runtime_json(runtime: &RuntimeSnapshot) -> serde_json::Value {
@@ -1851,7 +2040,11 @@ fn print_status(_context: &CliContext, snapshot: &RepoSnapshot) {
         snapshot
             .runtimes
             .iter()
-            .map(|runtime| format!("{} {}", runtime.name, check(runtime.hook_installed)))
+            .map(|runtime| format!(
+                "{} {}",
+                runtime.name,
+                check(_context, runtime.hook_installed)
+            ))
             .collect::<Vec<_>>()
             .join("   ")
     );
@@ -1865,12 +2058,41 @@ fn print_status(_context: &CliContext, snapshot: &RepoSnapshot) {
         snapshot.lockfile.pending_conflicts
     );
     println!("  integrity: {}", snapshot.integrity.status);
+    if _context.verbose() {
+        println!("  runtime details:");
+        for runtime in &snapshot.runtimes {
+            println!(
+                "    {:<7} present={} hook={} entities={}",
+                runtime.name,
+                runtime.present,
+                runtime.hook_installed,
+                runtime.entities.len()
+            );
+            if _context.debug() && !runtime.evidence.is_empty() {
+                println!(
+                    "            evidence={}",
+                    runtime
+                        .evidence
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+        if _context.debug() {
+            println!("  cache: {}", snapshot.integrity.cache_root.display());
+            for finding in &snapshot.core_findings {
+                println!("  finding: {finding}");
+            }
+        }
+    }
 }
 
-fn print_scan(snapshot: &RepoSnapshot) {
+fn print_scan(context: &CliContext, snapshot: &RepoSnapshot) {
     println!("Detected runtimes:");
     for runtime in &snapshot.runtimes {
-        let marker = if runtime.present { "✓" } else { "✗" };
+        let marker = check(context, runtime.present);
         let evidence = if runtime.evidence.is_empty() {
             "not detected".to_string()
         } else {
@@ -1889,7 +2111,11 @@ fn print_scan(snapshot: &RepoSnapshot) {
     let mut count = 0usize;
     for runtime in &snapshot.runtimes {
         if let Some(error) = &runtime.import_error {
-            println!("  ⚠ {:<7} import failed: {error}", runtime.name);
+            println!(
+                "  {} {:<7} import failed: {error}",
+                context.paint(OutputStyle::Warning, "⚠"),
+                runtime.name
+            );
             continue;
         }
         for entity in &runtime.entities {
@@ -1901,16 +2127,16 @@ fn print_scan(snapshot: &RepoSnapshot) {
     println!("{count} runtime entity view(s) detected.");
 }
 
-fn print_doctor(snapshot: &RepoSnapshot) {
+fn print_doctor(context: &CliContext, snapshot: &RepoSnapshot) {
     println!("AgentMesh {}", agentmesh_core::VERSION);
     println!("Repository: {}", snapshot.repo_root.display());
     println!();
     println!("Adapters:");
     for runtime in &snapshot.runtimes {
         let state = if runtime.present {
-            "✓ detected"
+            format!("{} detected", check(context, true))
         } else {
-            "✗ not detected"
+            format!("{} not detected", check(context, false))
         };
         println!(
             "  {:<7} {}   bundled, protocol 1, entities [instructions, skill, subagent]",
@@ -1919,7 +2145,8 @@ fn print_doctor(snapshot: &RepoSnapshot) {
     }
     for runtime in &snapshot.unknown_runtimes {
         println!(
-            "  unknown ✗ unsupported runtime candidate ({})",
+            "  unknown {} unsupported runtime candidate ({})",
+            check(context, false),
             runtime.display()
         );
     }
@@ -1931,11 +2158,14 @@ fn print_doctor(snapshot: &RepoSnapshot) {
         println!(
             "  {:<7} {} pinned-absolute   ({})",
             runtime.name,
-            check(runtime.hook_installed),
+            check(context, runtime.hook_installed),
             runtime.hook_overlay.display()
         );
         if let Some(note) = &runtime.hook_note {
-            println!("           ⚠ {note}");
+            println!(
+                "           {} {note}",
+                context.paint(OutputStyle::Warning, "⚠")
+            );
         }
     }
     println!("  Ownership: {}", snapshot.hook_ownership.status);
@@ -1948,11 +2178,11 @@ fn print_doctor(snapshot: &RepoSnapshot) {
             "    {:<7} {} owned entries ({})",
             entry.runtime,
             entry.entry_paths.len(),
-            check(entry.hook_present)
+            check(context, entry.hook_present)
         );
     }
     for issue in &snapshot.hook_ownership.issues {
-        println!("    ⚠ {issue}");
+        println!("    {} {issue}", context.paint(OutputStyle::Warning, "⚠"));
     }
     println!();
     println!("Watcher daemon:");
@@ -2029,8 +2259,12 @@ fn print_integrity(snapshot: &RepoSnapshot) {
     println!("  Hook entry style: pinned-absolute for Claude and Codex when installed");
 }
 
-fn check(ok: bool) -> &'static str {
-    if ok { "✓" } else { "✗" }
+fn check(context: &CliContext, ok: bool) -> String {
+    if ok {
+        context.paint(OutputStyle::Success, "✓")
+    } else {
+        context.paint(OutputStyle::Danger, "✗")
+    }
 }
 
 fn print_runtime_install_dry_run(context: &CliContext, runtime: &str) -> Result<()> {
@@ -2046,7 +2280,10 @@ fn print_runtime_install_dry_run(context: &CliContext, runtime: &str) -> Result<
         }
     };
     if !context.silent {
-        println!("→ Would install {runtime} sync hook:");
+        println!(
+            "{} Would install {runtime} sync hook:",
+            context.paint(OutputStyle::Info, "→")
+        );
         println!("  Overlay: {}", context.repo_root.join(overlay).display());
         println!(
             "  Command: {} sync --trigger={runtime}-hook --silent",
@@ -2059,8 +2296,12 @@ fn print_runtime_install_dry_run(context: &CliContext, runtime: &str) -> Result<
 fn print_git_pre_commit_dry_run(context: &CliContext) -> Result<()> {
     let hook = context.repo_root.join(".git/hooks/pre-commit");
     if !context.silent {
-        println!("→ Would install git pre-commit hook at {}", hook.display());
-        println!("  Command: agentmesh sync --check --silent");
+        println!(
+            "{} Would install git pre-commit hook at {}",
+            context.paint(OutputStyle::Info, "→"),
+            hook.display()
+        );
+        println!("  Command: agentmesh sync --check --trigger=git-pre-commit --silent");
     }
     Ok(())
 }
@@ -2068,8 +2309,15 @@ fn print_git_pre_commit_dry_run(context: &CliContext) -> Result<()> {
 fn print_upgrade_dry_run(context: &CliContext) -> Result<()> {
     let binary_path = std::env::current_exe().map_err(CliError::from_io)?;
     if !context.silent {
-        println!("→ Would repin integrity to {}", binary_path.display());
-        println!("→ Would rewrite recorded runtime hook entries to the current binary path");
+        println!(
+            "{} Would repin integrity to {}",
+            context.paint(OutputStyle::Info, "→"),
+            binary_path.display()
+        );
+        println!(
+            "{} Would rewrite recorded runtime hook entries to the current binary path",
+            context.paint(OutputStyle::Info, "→")
+        );
     }
     Ok(())
 }
@@ -2093,7 +2341,8 @@ fn install_detected_runtime_hooks(context: &CliContext) -> Result<()> {
 }
 
 fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> Result<()> {
-    let hook = context.repo_root.join(".git/hooks/pre-commit");
+    let hook = context.repo_root.join(GIT_PRE_COMMIT_HOOK);
+    let saved = context.repo_root.join(GIT_PRE_COMMIT_SAVED);
     let Some(parent) = hook.parent() else {
         return Err(CliError::new(
             "cannot resolve .git/hooks directory",
@@ -2108,41 +2357,92 @@ fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> Result<()> 
     }
 
     let binary_path = std::env::current_exe().map_err(CliError::from_io)?;
-    let block = format!(
-        "\n# AgentMesh\n{} sync --check --silent\n",
-        shell_quote_path(&binary_path)
-    );
     let existing = match fs::read_to_string(&hook) {
-        Ok(existing) => existing,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            "#!/bin/sh\nset -eu\n".to_string()
-        }
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(CliError::from_io(error)),
     };
-
-    if existing.contains("AgentMesh") && existing.contains("sync --check --silent") {
-        if !context.silent {
-            println!("✓ Git pre-commit hook already contains AgentMesh sync check.");
+    let existing_is_agentmesh = existing
+        .as_deref()
+        .is_some_and(|content| content.contains(GIT_PRE_COMMIT_MARKER));
+    let chain_original = if let Some(content) = existing.as_deref() {
+        if existing_is_agentmesh {
+            saved.exists()
+        } else {
+            if let Some(framework) = detect_pre_commit_framework(content)
+                && !force
+            {
+                return Err(CliError::new(
+                    format!(
+                        "detected {framework} managing pre-commit; add AgentMesh to that framework or rerun with --force"
+                    ),
+                    AgentmeshExitCode::Usage,
+                ));
+            }
+            if saved.exists() {
+                return Err(CliError::new(
+                    format!(
+                        "{} already exists; remove it or run uninstall before reinstalling",
+                        saved.display()
+                    ),
+                    AgentmeshExitCode::Usage,
+                ));
+            }
+            write_text_atomic(&saved, content)?;
+            make_executable(&saved)?;
+            true
         }
-        return Ok(());
-    }
-    if hook.exists() && !force {
-        return Err(CliError::new(
-            "pre-commit hook already exists; rerun with --force to append AgentMesh's check",
-            AgentmeshExitCode::Usage,
-        ));
-    }
+    } else {
+        false
+    };
 
-    fs::write(&hook, format!("{existing}{block}")).map_err(CliError::from_io)?;
+    write_text_atomic(&hook, &git_pre_commit_body(&binary_path, chain_original))?;
     make_executable(&hook)?;
+    record_git_pre_commit_ownership(context, chain_original)?;
 
     if !context.silent {
         println!(
-            "✓ Installed git pre-commit sync check at {}",
+            "{} Installed git pre-commit sync check at {}",
+            check(context, true),
             hook.display()
         );
     }
     Ok(())
+}
+
+fn detect_pre_commit_framework(content: &str) -> Option<&'static str> {
+    let body = content
+        .lines()
+        .filter(|line| !line.starts_with("#!"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if body.contains("# File generated by pre-commit:")
+        || body.contains("pre-commit run --hook-stage")
+    {
+        Some("pre-commit")
+    } else if body.contains("husky.sh") || body.contains("_husky.sh") {
+        Some("husky")
+    } else if body.contains("lefthook run pre-commit") || body.contains("lefthook install") {
+        Some("lefthook")
+    } else {
+        None
+    }
+}
+
+fn git_pre_commit_body(binary_path: &Path, chain_original: bool) -> String {
+    let original = if chain_original {
+        format!(
+            "\nif [ -x {} ]; then\n  {} \"$@\" || exit $?\nfi\n",
+            shell_quote_path(Path::new(GIT_PRE_COMMIT_SAVED)),
+            shell_quote_path(Path::new(GIT_PRE_COMMIT_SAVED))
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "#!/usr/bin/env bash\n# {GIT_PRE_COMMIT_MARKER} - do not edit directly\n\nset -e\n{original}\n{} sync --check --trigger=git-pre-commit --silent\n",
+        shell_quote_path(binary_path)
+    )
 }
 
 fn install_runtime_hook(context: &CliContext, runtime: &str) -> Result<()> {
@@ -2170,18 +2470,28 @@ fn install_runtime_hook(context: &CliContext, runtime: &str) -> Result<()> {
     record_hook_ownership(context, runtime, &response.hooks_installed)?;
 
     if !context.silent {
-        println!("→ Installing {runtime} sync hook:");
+        println!(
+            "{} Installing {runtime} sync hook:",
+            context.paint(OutputStyle::Info, "→")
+        );
         for hook in &response.hooks_installed {
             println!(
-                "  ✓ Wrote {} [{}]",
+                "  {} Wrote {} [{}]",
+                check(context, true),
                 hook.overlay_file.display(),
                 hook.entry_path
             );
         }
-        println!("  ✓ Recorded ownership in machine-local cache");
+        println!(
+            "  {} Recorded ownership in machine-local cache",
+            check(context, true)
+        );
         if runtime == "codex" {
-            println!("  ↗ Recommend adding .codex/hooks.json to .gitignore");
-            print_codex_trust_prompt(&response.hooks_installed);
+            println!(
+                "  {} Recommend adding .codex/hooks.json to .gitignore",
+                context.paint(OutputStyle::Info, "↗")
+            );
+            print_codex_trust_prompt(context, &response.hooks_installed);
         }
     }
 
@@ -2206,6 +2516,7 @@ fn rewrite_installed_runtime_hooks(context: &CliContext) -> Result<()> {
                 remove_runtime_hook_entries(context, runtime.as_str())?;
                 install_runtime_hook(context, runtime.as_str())?;
             }
+            GIT_PRE_COMMIT_RUNTIME => rewrite_git_pre_commit_hook(context)?,
             _ => {}
         }
     }
@@ -2213,10 +2524,29 @@ fn rewrite_installed_runtime_hooks(context: &CliContext) -> Result<()> {
     Ok(())
 }
 
-fn print_codex_trust_prompt(hooks: &[agentmesh_protocol::InstalledHook]) {
+fn rewrite_git_pre_commit_hook(context: &CliContext) -> Result<()> {
+    let hook = context.repo_root.join(GIT_PRE_COMMIT_HOOK);
+    let content = match fs::read_to_string(&hook) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(CliError::from_io(error)),
+    };
+    if !content.contains(GIT_PRE_COMMIT_MARKER) {
+        return Ok(());
+    }
+    let binary_path = std::env::current_exe().map_err(CliError::from_io)?;
+    let saved = context.repo_root.join(GIT_PRE_COMMIT_SAVED);
+    write_text_atomic(&hook, &git_pre_commit_body(&binary_path, saved.exists()))?;
+    make_executable(&hook)
+}
+
+fn print_codex_trust_prompt(context: &CliContext, hooks: &[agentmesh_protocol::InstalledHook]) {
     if let Some(hook) = hooks.first() {
         println!();
-        println!("⚠ Codex requires you to review and trust new command hooks before they run.");
+        println!(
+            "{} Codex requires you to review and trust new command hooks before they run.",
+            context.paint(OutputStyle::Warning, "⚠")
+        );
         println!("  On your next Codex tool call, Codex will prompt:");
         println!();
         println!("      \"Trust the new hook '{}'?\"", hook.command);
@@ -2262,11 +2592,45 @@ fn record_hook_ownership(
         .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Io))
 }
 
+fn record_git_pre_commit_ownership(context: &CliContext, saved_original: bool) -> Result<()> {
+    let runtime_name = agentmesh_core::RuntimeName::new(GIT_PRE_COMMIT_RUNTIME)
+        .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Usage))?;
+    let layout = cache_layout(&context.repo_root)?;
+    layout
+        .ensure_dirs()
+        .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Io))?;
+    let mut ownership = if layout.hook_ownership_json.exists() {
+        agentmesh_core::state::read_hook_ownership(&layout.hook_ownership_json)
+            .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Io))?
+    } else {
+        agentmesh_core::state::HookOwnership::default()
+    };
+
+    let mut entry_paths = vec!["agentmesh-wrapper".to_string()];
+    if saved_original {
+        entry_paths.push(GIT_PRE_COMMIT_SAVED.to_string());
+    }
+    ownership.0.insert(
+        runtime_name,
+        agentmesh_core::state::HookOwnershipEntry {
+            overlay_file: PathBuf::from(GIT_PRE_COMMIT_HOOK),
+            entry_paths,
+            installed_at: timestamp_string(),
+            installer_version: agentmesh_core::VERSION.to_string(),
+        },
+    );
+    agentmesh_core::state::write_hook_ownership(&layout.hook_ownership_json, &ownership)
+        .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Io))
+}
+
 fn uninstall_runtime_hooks(context: &CliContext, dry_run: bool) -> Result<()> {
     let layout = cache_layout(&context.repo_root)?;
     if !layout.hook_ownership_json.exists() {
         if !context.silent {
-            println!("⚠ hook-ownership.json missing. Cannot determine which entries to remove.");
+            println!(
+                "{} hook-ownership.json missing. Cannot determine which entries to remove.",
+                context.paint(OutputStyle::Warning, "⚠")
+            );
         }
         return Ok(());
     }
@@ -2274,14 +2638,22 @@ fn uninstall_runtime_hooks(context: &CliContext, dry_run: bool) -> Result<()> {
     let ownership = agentmesh_core::state::read_hook_ownership(&layout.hook_ownership_json)
         .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Io))?;
     if !context.silent {
-        println!("→ Removing AgentMesh-owned entries on this machine:");
+        println!(
+            "{} Removing AgentMesh-owned entries on this machine:",
+            context.paint(OutputStyle::Info, "→")
+        );
     }
 
     for (runtime, entry) in ownership.0 {
+        if runtime.as_str() == GIT_PRE_COMMIT_RUNTIME {
+            uninstall_git_pre_commit_hook(context, &entry, dry_run)?;
+            continue;
+        }
         if dry_run {
             if !context.silent {
                 println!(
-                    "    → Would remove {} hook(s) from {}",
+                    "    {} Would remove {} hook(s) from {}",
+                    context.paint(OutputStyle::Info, "→"),
                     entry.entry_paths.len(),
                     entry.overlay_file.display()
                 );
@@ -2295,16 +2667,77 @@ fn uninstall_runtime_hooks(context: &CliContext, dry_run: bool) -> Result<()> {
         if !context.silent {
             if response.ok {
                 println!(
-                    "    ✓ Removed {} hook(s) from {}",
+                    "    {} Removed {} hook(s) from {}",
+                    check(context, true),
                     response.removed_count,
                     entry.overlay_file.display()
                 );
             } else if let Some(error) = response.error {
-                println!("    ⚠ {}: {error}", runtime.as_str());
+                println!(
+                    "    {} {}: {error}",
+                    context.paint(OutputStyle::Warning, "⚠"),
+                    runtime.as_str()
+                );
             }
         }
     }
 
+    Ok(())
+}
+
+fn uninstall_git_pre_commit_hook(
+    context: &CliContext,
+    entry: &agentmesh_core::state::HookOwnershipEntry,
+    dry_run: bool,
+) -> Result<()> {
+    let hook = context.repo_root.join(&entry.overlay_file);
+    let saved = context.repo_root.join(GIT_PRE_COMMIT_SAVED);
+    if dry_run {
+        if !context.silent {
+            let action = if saved.exists() { "restore" } else { "remove" };
+            println!(
+                "    {} Would {action} git pre-commit hook at {}",
+                context.paint(OutputStyle::Info, "→"),
+                hook.display()
+            );
+        }
+        return Ok(());
+    }
+
+    if saved.exists() {
+        fs::rename(&saved, &hook).map_err(CliError::from_io)?;
+        make_executable(&hook)?;
+        if !context.silent {
+            println!(
+                "    {} Restored original git pre-commit hook",
+                check(context, true)
+            );
+        }
+        return Ok(());
+    }
+
+    match fs::read_to_string(&hook) {
+        Ok(content) if content.contains(GIT_PRE_COMMIT_MARKER) => {
+            fs::remove_file(&hook).map_err(CliError::from_io)?;
+            if !context.silent {
+                println!(
+                    "    {} Removed git pre-commit hook at {}",
+                    check(context, true),
+                    hook.display()
+                );
+            }
+        }
+        Ok(_) => {
+            if !context.silent {
+                println!(
+                    "    {} Git pre-commit hook changed after install; leaving it untouched",
+                    context.paint(OutputStyle::Warning, "⚠")
+                );
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(CliError::from_io(error)),
+    }
     Ok(())
 }
 
@@ -2488,6 +2921,19 @@ fn shell_quote_path(path: &Path) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
+fn write_text_atomic(path: &Path, content: &str) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Err(CliError::new(
+            format!("cannot resolve parent directory for {}", path.display()),
+            AgentmeshExitCode::Io,
+        ));
+    };
+    fs::create_dir_all(parent).map_err(CliError::from_io)?;
+    let temp = parent.join(format!(".agentmesh-{}.tmp", std::process::id()));
+    fs::write(&temp, content).map_err(CliError::from_io)?;
+    fs::rename(&temp, path).map_err(CliError::from_io)
+}
+
 fn make_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -2640,7 +3086,17 @@ fn map_lockfile_error(error: agentmesh_core::lockfile::LockfileError) -> CliErro
 }
 
 fn map_watcher_error(error: agentmesh_watcher::WatcherError) -> CliError {
-    CliError::new(error.to_string(), AgentmeshExitCode::Adapter)
+    let exit_code = match &error {
+        agentmesh_watcher::WatcherError::Core(_) => AgentmeshExitCode::Adapter,
+        agentmesh_watcher::WatcherError::CacheRootUnavailable
+        | agentmesh_watcher::WatcherError::DeserializeJson { .. }
+        | agentmesh_watcher::WatcherError::Io { .. }
+        | agentmesh_watcher::WatcherError::Notify { .. }
+        | agentmesh_watcher::WatcherError::ParseLockfile { .. }
+        | agentmesh_watcher::WatcherError::SerializeJson { .. }
+        | agentmesh_watcher::WatcherError::ServiceRegistration { .. } => AgentmeshExitCode::Io,
+    };
+    CliError::new(error.to_string(), exit_code)
 }
 
 #[cfg(test)]
@@ -2666,6 +3122,41 @@ mod tests {
         let help = Cli::command().render_help().to_string();
 
         assert!(!help.contains("__adapter"));
+    }
+
+    #[test]
+    fn command_help_snapshots_cover_public_surface() {
+        insta::assert_snapshot!("command_help_surface", command_help_surface());
+    }
+
+    fn command_help_surface() -> String {
+        let mut surface = String::new();
+        let mut root = Cli::command();
+        push_help("agentmesh", &mut root, &mut surface);
+
+        let subcommand_names = Cli::command()
+            .get_subcommands()
+            .filter(|command| !command.is_hide_set())
+            .map(|command| command.get_name().to_string())
+            .collect::<Vec<_>>();
+
+        for name in subcommand_names {
+            let mut command = Cli::command();
+            let Some(subcommand) = command.find_subcommand_mut(&name) else {
+                panic!("subcommand should exist: {name}");
+            };
+            push_help(&format!("agentmesh {name}"), subcommand, &mut surface);
+        }
+
+        surface
+    }
+
+    fn push_help(name: &str, command: &mut clap::Command, surface: &mut String) {
+        surface.push_str("## ");
+        surface.push_str(name);
+        surface.push_str("\n\n");
+        surface.push_str(&command.render_help().to_string());
+        surface.push_str("\n\n");
     }
 
     #[test]
@@ -2843,6 +3334,7 @@ mod tests {
             }],
             unknown_runtimes: Vec::new(),
             core_findings: Vec::new(),
+            core_health: None,
         };
 
         let encoded = match status_json(&snapshot) {

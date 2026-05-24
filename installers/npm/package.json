@@ -7,11 +7,12 @@
     "agentmesh": "bin/agentmesh"
   },
   "scripts": {
-    "postinstall": "bin/agentmesh --install",
+    "postinstall": "node scripts/install.js",
     "smoke": "bin/agentmesh --smoke"
   },
   "files": [
     "bin",
+    "scripts",
     "README.md"
   ]
 }

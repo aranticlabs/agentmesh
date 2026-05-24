@@ -52,10 +52,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: sh installers/install.sh --smoke
       - run: sh installers/install.sh --upgrade-help
+      - run: node --check installers/npm/scripts/install.js
+      - run: AGENTMESH_NPM_POSTINSTALL_SMOKE=1 node installers/npm/scripts/install.js
       - run: sh installers/npm/bin/agentmesh --smoke
       - run: sh installers/npm/bin/agentmesh --upgrade-help
       - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --smoke
       - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --upgrade-help
+      - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper.entry; raise SystemExit(agentmesh_wrapper.entry.main())' --smoke
+      - run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper.entry; raise SystemExit(agentmesh_wrapper.entry.main())' --upgrade-help
+      - run: python -m pip wheel --no-deps installers/pip -w dist/pip
       - run: ruby -c installers/homebrew-formula/agentmesh.rb

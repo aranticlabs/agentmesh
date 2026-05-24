@@ -42,9 +42,9 @@ use crate::state::{
 };
 use crate::types::{EntityId, Hash, LocationKey, RuntimeName, TypeError};
 use crate::{
-    CanonicalInstructions, DoctorReport, EntityType, InitOptions, InitSummary, ReconcileSummary,
-    RestoreOptions, RestoreSummary, SyncOptions, SyncSummary, UninstallOptions, UninstallSummary,
-    UpgradeSummary, VERSION,
+    CanonicalInstructions, DoctorHealth, DoctorReport, EntityType, InitOptions, InitSummary,
+    ReconcileSummary, RestoreOptions, RestoreSummary, SyncOptions, SyncSummary, UninstallOptions,
+    UninstallSummary, UpgradeSummary, VERSION,
 };
 
 /// Pipeline result type.
@@ -401,6 +401,19 @@ pub fn uninstall(repo_root: &Path, opts: UninstallOptions) -> Result<UninstallSu
                 });
             }
         }
+
+        let config = repo_root.join("agentmesh.config.yaml");
+        match fs::remove_file(&config) {
+            Ok(()) => removed_entries.push(config.display().to_string()),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PipelineError::Io {
+                    action: "remove file",
+                    path: config,
+                    source,
+                });
+            }
+        }
     }
 
     Ok(UninstallSummary { removed_entries })
@@ -448,7 +461,16 @@ pub fn doctor_with_adapter_registry(
     findings.push(format!("watcher_log: {}", cache.watcher_log.display()));
     findings.push("network: disabled".to_string());
 
-    Ok(DoctorReport { findings })
+    Ok(DoctorReport {
+        findings,
+        health: DoctorHealth {
+            entities_out_of_sync: sync_state.out_of_sync,
+            pending_conflicts,
+            pending_syncs: pending_count,
+            failed_pending_syncs: failed_pending_count,
+            capability_skips: capability_skipped,
+        },
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -4553,6 +4575,11 @@ schema: 1
                 .iter()
                 .any(|finding| finding.starts_with("adapter_coverage_instructions:"))
         );
+        assert_eq!(report.health.entities_out_of_sync, 0);
+        assert_eq!(report.health.pending_conflicts, 0);
+        assert_eq!(report.health.pending_syncs, 0);
+        assert_eq!(report.health.failed_pending_syncs, 0);
+        assert_eq!(report.health.capability_skips, 0);
     }
 
     #[test]

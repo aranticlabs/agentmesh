@@ -209,6 +209,12 @@ install_archive() {
   chmod +x "$binary"
   cp "$binary" "$install_dir/agentmesh"
   echo "Installed agentmesh to $install_dir/agentmesh"
+  case ":${PATH:-}:" in
+    *":$install_dir:"*) ;;
+    *)
+      echo "Add $install_dir to PATH before running agentmesh from another shell." >&2
+      ;;
+  esac
 }
 
 channel="stable"

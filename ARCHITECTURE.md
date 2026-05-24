@@ -32,8 +32,8 @@ helpers, content hashing, and Markdown frontmatter helpers shared by bundled ada
 watcher process or run a foreground `notify` loop, records idle/drain status in machine-local
 state, debounces ordinary filesystem changes, throttles VCS metadata churn, and suppresses
 self-emitted native writes by comparing current file hashes with lockfile-emitted native hashes.
-The drain engine handoff is explicit in watcher state until the core processing path is available.
-Operating-system service registration remains separate implementation work.
+The foreground watcher drives the same core sync path as hooks and CLI sync. Operating-system
+service registration writes platform launch definitions without silently installing global hooks.
 
 `adapters/claude` imports and emits Claude-native files:
 

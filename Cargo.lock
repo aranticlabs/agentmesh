@@ -64,6 +64,7 @@ dependencies = [
  "agentmesh-protocol",
  "agentmesh-watcher",
  "clap",
+ "insta",
  "miette",
  "serde",
  "serde_json",
