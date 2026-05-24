@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build and cache output
+dist/
+build/
+coverage/
+.cache/
+.parcel-cache/
+.next/
+out/
+
+# .NET
+bin/
+obj/
+
+# Archives and lockfiles (optional — Prettier doesn't format these anyway)
+*.min.js
+*.min.css
+
+# Environment and secrets
+.env
+.env.*
+
+# macOS
+.DS_Store

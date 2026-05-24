@@ -1,0 +1,29 @@
+{
+  "name": "agentmesh",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aranticlabs/agentmesh.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/aranticlabs/agentmesh/issues"
+  },
+  "homepage": "https://github.com/aranticlabs/agentmesh#readme",
+  "devDependencies": {
+    "prettier": "^3.8.3"
+  }
+}
