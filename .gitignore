@@ -39,3 +39,8 @@ coverage/
 *.zip
 *.tar
 *.tar.gz
+
+# AI
+.claude/
+.codex/
+.cursor/
