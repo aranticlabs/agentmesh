@@ -5,12 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentmesh_adapter_sdk_rust::{
+    Adapter, AdapterError, AdapterMetadata, FormatTranslation, FrontmatterDocument,
     compose_frontmatter, ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files,
     is_safe_relative, max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted,
     read_json_object, read_to_string, remove_matching_entries, remove_recorded_entries, selected,
-    sha256_bytes, skipped_entity, slug_for_entity, slugify, workspace_relative,
-    workspace_root_for, write_atomic, write_json_pretty, Adapter, AdapterError, AdapterMetadata,
-    FormatTranslation, FrontmatterDocument,
+    sha256_bytes, skipped_entity, slug_for_entity, slugify, workspace_relative, workspace_root_for,
+    write_atomic, write_json_pretty,
 };
 use agentmesh_protocol::{
     AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityFile, EntityFileEncoding,
@@ -782,7 +782,6 @@ fn skill_runtime_file(path: &Path, slug: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
-
 fn read_entity_file(path: &Path) -> agentmesh_adapter_sdk_rust::Result<EntityFile> {
     fs::read(path)
         .map(EntityFile::from_bytes)
@@ -821,7 +820,6 @@ fn entity_file_bytes(
     })
 }
 
-
 fn codex_matcher(extra: Option<&str>) -> String {
     let mut tools = vec!["Edit", "Write", "MultiEdit"];
     if let Some(extra) = extra.map(str::trim).filter(|extra| !extra.is_empty()) {
@@ -838,7 +836,6 @@ fn codex_hooks_are_empty(value: &JsonValue) -> bool {
         .iter()
         .all(|(key, value)| key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty))
 }
-
 
 #[cfg(test)]
 mod tests {

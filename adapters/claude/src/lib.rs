@@ -5,12 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentmesh_adapter_sdk_rust::{
-    compose_frontmatter, ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files,
-    is_safe_relative, max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted,
-    read_json_object, read_to_string, remove_matching_entries, remove_recorded_entries, selected,
-    sha256_bytes, skipped_entity, slug_for_entity, slugify, workspace_relative,
-    workspace_root_for, write_atomic, write_json_pretty, Adapter, AdapterError, AdapterMetadata,
-    FormatTranslation,
+    Adapter, AdapterError, AdapterMetadata, FormatTranslation, compose_frontmatter,
+    ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files, is_safe_relative,
+    max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted, read_json_object,
+    read_to_string, remove_matching_entries, remove_recorded_entries, selected, sha256_bytes,
+    skipped_entity, slug_for_entity, slugify, workspace_relative, workspace_root_for, write_atomic,
+    write_json_pretty,
 };
 use agentmesh_protocol::{
     AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityFile, EntityFileEncoding,
@@ -18,7 +18,7 @@ use agentmesh_protocol::{
     InstallHooksResponse, InstalledHook, RemoveHooksRequest, RemoveHooksResponse, RuntimeMode,
     SkippedPath,
 };
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 const SUPPORTED_ENTITIES: &[EntityType] = &[
@@ -560,7 +560,6 @@ fn skill_runtime_file(path: &Path, slug: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
-
 fn read_entity_file(path: &Path) -> agentmesh_adapter_sdk_rust::Result<EntityFile> {
     fs::read(path)
         .map(EntityFile::from_bytes)
@@ -599,7 +598,6 @@ fn entity_file_bytes(
     })
 }
 
-
 fn append_matcher(default: &str, extra: Option<&str>) -> String {
     match extra.map(str::trim).filter(|extra| !extra.is_empty()) {
         Some(extra) => format!("{default}|{extra}"),
@@ -607,14 +605,13 @@ fn append_matcher(default: &str, extra: Option<&str>) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use agentmesh_adapter_sdk_rust::{canonicalize_frontmatter, Adapter};
+    use agentmesh_adapter_sdk_rust::{Adapter, canonicalize_frontmatter};
     use agentmesh_protocol::{
         EmitEntity, EmitRequest, EntityFile, EntityFileEncoding, ImportRequest, ImportedEntity,
         InstallHooksRequest, RemoveHooksRequest, RuntimeMode,
@@ -826,9 +823,11 @@ mod tests {
 
         assert!(response.files_written.is_empty());
         assert_eq!(response.skipped.len(), 1);
-        assert!(!root
-            .join(".claude/skills/security-review/SKILL.md")
-            .exists());
+        assert!(
+            !root
+                .join(".claude/skills/security-review/SKILL.md")
+                .exists()
+        );
     }
 
     #[test]

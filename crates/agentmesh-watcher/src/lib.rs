@@ -260,19 +260,20 @@ fn start_with_cache_root(
     let layout = WatcherLayout::new(repo_root, cache_root)?;
     layout.ensure_dirs()?;
 
-    if !opts.register_as_service
-        && let Some(record) = read_active_record(&layout)?
-        && is_running_state(&record.state)
-    {
-        append_log(
-            &layout.log_file,
-            "start-idempotent",
-            json!({
-                "pid": record.pid,
-                "state": record.state,
-            }),
-        )?;
-        return Ok(handle(repo_root, &layout));
+    if !opts.register_as_service {
+        if let Some(record) = read_active_record(&layout)? {
+            if is_running_state(&record.state) {
+                append_log(
+                    &layout.log_file,
+                    "start-idempotent",
+                    json!({
+                        "pid": record.pid,
+                        "state": record.state,
+                    }),
+                )?;
+                return Ok(handle(repo_root, &layout));
+            }
+        }
     }
 
     if opts.register_as_service {
