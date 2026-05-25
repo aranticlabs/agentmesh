@@ -231,6 +231,22 @@ pub fn conflict_entity_dir(conflicts_dir: &Path, entity_id: &EntityId) -> PathBu
     conflicts_dir.join(entity_cache_segment(entity_id))
 }
 
+/// Returns the file name used for one preserved conflict version.
+#[must_use]
+pub fn conflict_version_file_name(runtime: &RuntimeName, timestamp: &str) -> String {
+    format!(
+        "{}-{}.md",
+        runtime.as_str(),
+        conflict_timestamp_file_segment(timestamp)
+    )
+}
+
+/// Returns the cache-safe timestamp segment used in preserved conflict filenames.
+#[must_use]
+pub fn conflict_timestamp_file_segment(timestamp: &str) -> String {
+    timestamp.replace(':', "-")
+}
+
 fn entity_cache_segment(entity_id: &EntityId) -> String {
     entity_id.as_str().replace(':', "--")
 }
@@ -391,7 +407,18 @@ fn path_bytes(path: &OsStr) -> Vec<u8> {
 mod tests {
     use std::path::Path;
 
-    use super::{CacheLayout, HookOwnership, repo_cache_key, sha256_bytes, write_json};
+    use super::{
+        CacheLayout, HookOwnership, conflict_version_file_name, repo_cache_key, sha256_bytes,
+        write_json,
+    };
+    use crate::types::RuntimeName;
+
+    fn runtime_name(value: &str) -> RuntimeName {
+        match RuntimeName::new(value) {
+            Ok(runtime) => runtime,
+            Err(error) => panic!("runtime name should be valid: {error}"),
+        }
+    }
 
     #[test]
     fn cache_key_is_stable_for_the_same_path() {
@@ -411,6 +438,14 @@ mod tests {
         assert!(layout.integrity_json.ends_with("integrity.json"));
         assert!(layout.state_lock.ends_with("locks/state"));
         assert!(layout.pending_syncs_dir.ends_with("pending-syncs"));
+    }
+
+    #[test]
+    fn conflict_version_file_names_are_cache_safe() {
+        assert_eq!(
+            conflict_version_file_name(&runtime_name("codex"), "2026-05-24T14:32:11Z"),
+            "codex-2026-05-24T14-32-11Z.md"
+        );
     }
 
     #[test]

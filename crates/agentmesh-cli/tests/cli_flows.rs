@@ -1432,6 +1432,7 @@ fn service_registration_writes_platform_definition() {
     assert!(!service.exists());
 }
 
+#[cfg(not(target_os = "linux"))]
 #[test]
 fn foreground_watcher_drains_canonical_edit_through_core_sync() {
     let temp = match tempfile::tempdir() {

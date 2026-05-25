@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use serde_norway::{Mapping, Value};
 use thiserror::Error;
 
-use crate::state::{StateError, conflict_entity_dir, write_atomic};
+use crate::state::{StateError, conflict_entity_dir, conflict_version_file_name, write_atomic};
 use crate::types::{EntityId, RuntimeName};
 
 const COMMON_FRONTMATTER_KEYS: &[&str] = &["name", "description", "allowed-tools", "model"];
@@ -137,7 +137,7 @@ pub fn preserve_losing_version(
     contents: &str,
 ) -> Result<PathBuf> {
     let path = conflict_entity_dir(conflicts_dir, entity_id)
-        .join(format!("{}-{timestamp}.md", runtime.as_str()));
+        .join(conflict_version_file_name(runtime, timestamp));
     write_atomic(&path, contents.as_bytes())?;
     Ok(path)
 }
@@ -572,6 +572,7 @@ Body
         };
 
         assert!(path.starts_with(Path::new(temp.path())));
+        assert!(path.ends_with("codex-2026-05-24T14-32-11Z.md"));
         assert!(path.exists());
     }
 }

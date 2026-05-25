@@ -38,8 +38,8 @@ use crate::mutex::{AgentmeshMutex, MutexError};
 use crate::pending_queue::{PendingQueue, PendingQueueError};
 use crate::state::{
     CacheLayout, IntegrityPin, PendingAction, PendingSyncRecord, StateError, conflict_entity_dir,
-    read_hook_ownership, read_integrity_pin, read_json, sha256_bytes, sha256_file, write_atomic,
-    write_integrity_pin,
+    conflict_version_file_name, read_hook_ownership, read_integrity_pin, read_json, sha256_bytes,
+    sha256_file, write_atomic, write_integrity_pin,
 };
 use crate::types::{EntityId, Hash, LocationKey, RuntimeName, TypeError};
 use crate::{
@@ -3200,9 +3200,13 @@ fn selected_preserved_version(
 ) -> Result<PathBuf> {
     if let Some(timestamp) = at {
         let dir = conflict_entity_dir(&cache.conflicts_dir, entity_id);
-        let path = dir.join(format!("{}-{timestamp}.md", runtime.as_str()));
+        let path = dir.join(conflict_version_file_name(runtime, timestamp));
         if path.is_file() {
             return Ok(path);
+        }
+        let legacy_path = dir.join(format!("{}-{timestamp}.md", runtime.as_str()));
+        if legacy_path != path && legacy_path.is_file() {
+            return Ok(legacy_path);
         }
         return Err(PipelineError::PreservedVersionNotFound {
             entity_id: entity_id.clone(),

@@ -66,7 +66,7 @@ impl AgentmeshMutex {
                 _file: file,
                 path: self.path.clone(),
             })),
-            Err(source) if source.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(source) if is_lock_contention(&source) => Ok(None),
             Err(source) => Err(MutexError::Io {
                 action: "try acquire",
                 path: self.path.clone(),
@@ -95,6 +95,22 @@ impl AgentmeshMutex {
                 path: self.path.clone(),
                 source,
             })
+    }
+}
+
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

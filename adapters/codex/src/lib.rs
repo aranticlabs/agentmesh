@@ -474,7 +474,7 @@ fn import_toml_subagent(
             "Codex subagent TOML root must be a table",
         ));
     };
-    let frontmatter = table
+    let mut frontmatter = table
         .iter()
         .map(|(key, value)| (key.clone(), toml_to_json(value)))
         .collect::<BTreeMap<_, _>>();
@@ -484,6 +484,8 @@ fn import_toml_subagent(
         .and_then(JsonValue::as_str)
         .map(|body| format!("{body}\n"))
         .unwrap_or_default();
+    frontmatter.remove("instructions");
+    frontmatter.remove("prompt");
     let markdown = compose_frontmatter(&FrontmatterDocument {
         frontmatter: json_map_to_yaml(&frontmatter)?,
         body,
@@ -584,8 +586,11 @@ fn render_toml_subagent(
             .map(|(key, value)| (key.clone(), value.clone())),
     );
 
-    let body = document.body.trim();
-    if !body.is_empty() && !merged.contains_key("instructions") && !merged.contains_key("prompt") {
+    let body = toml_instructions_body(&document.body);
+    if !document.body.is_empty()
+        && !merged.contains_key("instructions")
+        && !merged.contains_key("prompt")
+    {
         merged.insert(
             "instructions".to_string(),
             JsonValue::String(body.to_string()),
@@ -599,6 +604,10 @@ fn render_toml_subagent(
         }
     }
     Ok(serialize_toml_table(&table))
+}
+
+fn toml_instructions_body(body: &str) -> String {
+    body.strip_suffix('\n').unwrap_or(body).to_string()
 }
 
 fn serialize_toml_table(table: &toml::map::Map<String, toml::Value>) -> String {
@@ -650,8 +659,20 @@ fn inline_toml_value(value: &toml::Value) -> String {
             let values = values.iter().map(inline_toml_value).collect::<Vec<_>>();
             format!("[{}]", values.join(", "))
         }
-        toml::Value::Table(_) => "{}".to_string(),
+        toml::Value::Table(table) => inline_toml_table(table),
     }
+}
+
+fn inline_toml_table(table: &toml::map::Map<String, toml::Value>) -> String {
+    if table.is_empty() {
+        return "{}".to_string();
+    }
+
+    let entries = table
+        .iter()
+        .map(|(key, value)| format!("{} = {}", quote_toml_key(key), inline_toml_value(value)))
+        .collect::<Vec<_>>();
+    format!("{{ {} }}", entries.join(", "))
 }
 
 fn quote_toml_key(key: &str) -> String {
@@ -914,6 +935,7 @@ mod tests {
             panic!("subagent should be imported");
         };
         assert_eq!(subagent.frontmatter.get("model"), Some(&json!("gpt-5")));
+        assert_eq!(subagent.frontmatter.get("instructions"), None);
         assert!(
             subagent
                 .files
@@ -1107,6 +1129,7 @@ mod tests {
 model = "gpt-5"
 instructions = "Review code.\nUse structured findings."
 tags = ["security", "review"]
+constraints = [{ kind = "deny", values = ["unsafe"] }, { kind = "require", metadata = { level = "high" } }]
 
 [metadata]
 severity = ["high", "medium"]
@@ -1180,6 +1203,10 @@ severity = ["high", "medium"]
                     .filter_map(toml::Value::as_str)
                     .collect::<Vec<_>>()
             });
+        let constraints = table
+            .get("constraints")
+            .and_then(toml::Value::as_array)
+            .unwrap_or_else(|| panic!("constraints should be preserved"));
 
         assert_eq!(
             table.get("instructions").and_then(toml::Value::as_str),
@@ -1187,6 +1214,24 @@ severity = ["high", "medium"]
         );
         assert_eq!(tags, Some(vec!["security", "review"]));
         assert_eq!(severity, Some(vec!["high", "medium"]));
+        assert_eq!(
+            constraints
+                .first()
+                .and_then(toml::Value::as_table)
+                .and_then(|constraint| constraint.get("kind"))
+                .and_then(toml::Value::as_str),
+            Some("deny")
+        );
+        assert_eq!(
+            constraints
+                .get(1)
+                .and_then(toml::Value::as_table)
+                .and_then(|constraint| constraint.get("metadata"))
+                .and_then(toml::Value::as_table)
+                .and_then(|metadata| metadata.get("level"))
+                .and_then(toml::Value::as_str),
+            Some("high")
+        );
     }
 
     #[test]

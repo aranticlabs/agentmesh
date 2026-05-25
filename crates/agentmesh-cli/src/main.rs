@@ -1143,7 +1143,14 @@ fn find_preserved_version(
                 let Some(timestamp) = preserved_timestamp(&path, runtime) else {
                     continue;
                 };
-                if at.map(|expected| expected == timestamp).unwrap_or(true) {
+                if at
+                    .map(|expected| {
+                        expected == timestamp
+                            || agentmesh_core::state::conflict_timestamp_file_segment(expected)
+                                == timestamp
+                    })
+                    .unwrap_or(true)
+                {
                     candidates.push(path);
                 }
             }
