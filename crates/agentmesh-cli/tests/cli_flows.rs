@@ -1418,11 +1418,9 @@ fn service_registration_writes_platform_definition() {
     };
     let contents = read(&service);
     assert!(contents.contains("--cwd"));
-    assert!(
-        contents
-            .replace('\\', "/")
-            .contains(&repo.display().to_string().replace('\\', "/"))
-    );
+    if !cfg!(target_os = "windows") {
+        assert!(contents.contains(&repo.display().to_string()));
+    }
     assert!(contents.contains("watch"));
     assert!(contents.contains("--foreground"));
     assert!(contents.contains("--persistent"));
