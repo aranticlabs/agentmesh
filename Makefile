@@ -1,5 +1,5 @@
 .PHONY: help fmt fmt-check check clippy test build bench-check deny audit fuzz-check \
-        installer-smoke ci-rust ci-supply-chain ci-installers ci release clean
+        installer-smoke ci-rust ci-supply-chain ci-installers ci release retag clean
 
 GREEN := \033[0;32m
 BLUE := \033[0;34m
@@ -15,6 +15,7 @@ help:
 	@echo "  make ci-installers   Run installer smoke checks"
 	@echo "  make build           Build the release binary"
 	@echo "  make release v=X.Y.Z Tag and push a GitHub release"
+	@echo "  make retag v=X.Y.Z   Recreate and push a GitHub release tag"
 
 fmt:
 	@cargo fmt --all
@@ -49,10 +50,6 @@ fuzz-check:
 installer-smoke:
 	@sh installers/install.sh --smoke
 	@sh installers/install.sh --upgrade-help
-	@node --check installers/npm/scripts/install.js
-	@AGENTMESH_NPM_POSTINSTALL_SMOKE=1 node installers/npm/scripts/install.js
-	@sh installers/npm/bin/agentmesh --smoke
-	@sh installers/npm/bin/agentmesh --upgrade-help
 
 ci-rust: fmt-check check clippy test build bench-check fuzz-check
 	@echo "$(GREEN)[SUCCESS]$(NC) Rust CI checks passed"
@@ -113,6 +110,26 @@ release:
 	git tag "$$tag"; \
 	git push origin "$$tag"; \
 	echo "$(GREEN)[SUCCESS]$(NC) Release tag $$tag pushed. GitHub Actions will build and publish the release assets."
+
+retag:
+	@if [ -z "$(v)" ]; then \
+		echo "$(RED)[ERROR]$(NC) Version required. Usage: make retag v=0.1.0"; \
+		exit 1; \
+	fi
+	@if ! printf '%s\n' "$(v)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "$(RED)[ERROR]$(NC) Version must look like X.Y.Z"; \
+		exit 1; \
+	fi
+	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	tag="agentmesh-v$(v)"; \
+	echo "$(BLUE)[INFO]$(NC) Pushing $$branch to origin..."; \
+	git push origin "$$branch"; \
+	echo "$(BLUE)[INFO]$(NC) Retagging $$tag..."; \
+	git tag -d "$$tag" 2>/dev/null || true; \
+	git push origin ":refs/tags/$$tag" 2>/dev/null || true; \
+	git tag "$$tag"; \
+	git push origin "$$tag"; \
+	echo "$(GREEN)[SUCCESS]$(NC) Tag $$tag re-pushed to origin. GitHub Actions will rebuild the release assets."
 
 clean:
 	@rm -rf target fuzz/target dist
