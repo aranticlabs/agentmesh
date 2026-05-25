@@ -1,0 +1,32 @@
+[package]
+name = "agentmesh-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "agentmesh"
+path = "src/main.rs"
+
+[dependencies]
+agentmesh-adapter-claude.workspace = true
+agentmesh-adapter-codex.workspace = true
+agentmesh-adapter-sdk-rust.workspace = true
+agentmesh-core.workspace = true
+agentmesh-protocol.workspace = true
+agentmesh-watcher.workspace = true
+clap.workspace = true
+miette.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

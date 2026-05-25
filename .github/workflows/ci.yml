@@ -1,0 +1,313 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: make ci-rust
+      - if: matrix.os == 'ubuntu-latest'
+        run: AGENTMESH_FULL_SYNC_BUDGET_SECONDS=5 AGENTMESH_HOOK_P99_BUDGET_MS=100 cargo test --release -p agentmesh-core --test performance_budgets --all-features -- --ignored
+
+  windows:
+    name: rust (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --all-features
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: cargo build --workspace
+      - run: cargo build --locked --release -p agentmesh-cli
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintPlatform
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+      - name: Verify Windows installer fake release flow
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Assert-LastExitCode {
+            param([string]$Message)
+            if ($LASTEXITCODE -ne 0) {
+              throw $Message
+            }
+          }
+
+          $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          $release = Join-Path $tmp "releases\agentmesh-cli-v0.1.0"
+          $stage = Join-Path $tmp "stage\agentmesh"
+          $install = Join-Path $tmp "install"
+          $cosign = Join-Path $tmp "cosign.exe"
+          $cosignSource = Join-Path $tmp "fake-cosign.rs"
+          New-Item -ItemType Directory -Path $release, $stage, $install -Force | Out-Null
+
+          Copy-Item target\release\agentmesh.exe (Join-Path $stage "agentmesh.exe")
+          $artifact = "agentmesh-v0.1.0-x86_64-pc-windows-msvc.tar.gz"
+          tar -czf (Join-Path $release $artifact) -C (Join-Path $tmp "stage") agentmesh
+          Assert-LastExitCode "failed to create test release archive"
+          $hash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $release $artifact)).Hash.ToLowerInvariant()
+          Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "$hash  $artifact`n"
+          New-Item -ItemType File -Path (Join-Path $release "SHA256SUMS.sig"), (Join-Path $release "SHA256SUMS.bundle") -Force | Out-Null
+
+          @'
+          use std::{env, path::Path, process};
+
+          fn main() {
+              let args: Vec<String> = env::args().skip(1).collect();
+              let valid = args.len() == 10
+                  && args[0] == "verify-blob"
+                  && args[1] == "--signature"
+                  && Path::new(&args[2]).is_file()
+                  && args[3] == "--bundle"
+                  && Path::new(&args[4]).is_file()
+                  && args[5] == "--certificate-identity-regexp"
+                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+                  && args[7] == "--certificate-oidc-issuer"
+                  && args[8] == "https://token.actions.githubusercontent.com"
+                  && Path::new(&args[9]).is_file();
+
+              if !valid {
+                  process::exit(1);
+              }
+          }
+          '@ | Set-Content -Path $cosignSource -Encoding ASCII
+          rustc --edition 2021 $cosignSource -o $cosign
+          Assert-LastExitCode "failed to compile fake cosign verifier"
+
+          $releaseRoot = (Resolve-Path (Join-Path $tmp "releases")).Path -replace "\\", "/"
+          $env:AGENTMESH_BASE_URL = "file:///$releaseRoot"
+          $env:AGENTMESH_COSIGN_BIN = $cosign
+          powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir $install
+          Assert-LastExitCode "install.ps1 failed for valid fake release"
+          & (Join-Path $install "agentmesh.exe") --version
+          Assert-LastExitCode "installed agentmesh.exe did not run"
+
+          Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "0000  $artifact`n"
+          powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir (Join-Path $tmp "bad-install")
+          $badExitCode = $LASTEXITCODE
+          if ($badExitCode -eq 0) {
+            throw "install.ps1 accepted a mismatched archive checksum"
+          }
+          exit 0
+
+  musl:
+    name: rust (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agentmesh-cli
+      - run: target/x86_64-unknown-linux-musl/release/agentmesh --version
+
+  supply-chain:
+    name: supply-chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: make ci-supply-chain
+      - run: cargo deny --manifest-path fuzz/Cargo.toml check
+      - run: cargo audit --file fuzz/Cargo.lock
+
+  installers:
+    name: installer smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p agentmesh-cli
+      - run: make ci-installers
+      - name: Verify website browser render
+        run: make website-render
+      - name: Verify musl installer platform detection
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/bin"
+          cat >"$tmp/bin/ldd" <<'EOF'
+          #!/usr/bin/env sh
+          echo 'musl libc (x86_64)'
+          EOF
+          chmod +x "$tmp/bin/ldd"
+
+          cat >"$tmp/bin/uname" <<'EOF'
+          #!/usr/bin/env sh
+          case "$1" in
+            -s) echo Linux ;;
+            -m) echo "${AGENTMESH_TEST_UNAME_M:-x86_64}" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod +x "$tmp/bin/uname"
+
+          shell_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/install.sh --print-platform)"
+          test "$shell_musl" = "x86_64-unknown-linux-musl"
+          npm_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/npm/bin/agentmesh --print-platform)"
+          test "$npm_musl" = "x86_64-unknown-linux-musl"
+
+          if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/install.sh --print-platform >/dev/null 2>&1; then
+            exit 1
+          fi
+          if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/npm/bin/agentmesh --print-platform >/dev/null 2>&1; then
+            exit 1
+          fi
+      - name: Verify direct and npm installer flows
+        run: |
+          sha256_file() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1" | awk '{print $1}'
+            else
+              shasum -a 256 "$1" | awk '{print $1}'
+            fi
+          }
+
+          stable="$(sh installers/install.sh --print-url --channel=stable)"
+          nightly="$(sh installers/install.sh --print-url --channel=nightly)"
+          case "$stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
+          npm_stable="$(AGENTMESH_CHANNEL=stable sh installers/npm/bin/agentmesh --print-url)"
+          npm_nightly="$(AGENTMESH_CHANNEL=nightly sh installers/npm/bin/agentmesh --print-url)"
+          case "$npm_stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$npm_nightly" in */nightly/*) ;; *) exit 1 ;; esac
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          platform="$(sh installers/install.sh --print-platform)"
+          mkdir -p "$tmp/releases/agentmesh-cli-v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
+
+          cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
+          cat >"$cosign_artifact" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          test "$#" -eq 10
+          test "$1" = "verify-blob"
+          test "$2" = "--signature"
+          test -f "$3"
+          test "$4" = "--bundle"
+          test -f "$5"
+          test "$6" = "--certificate-identity-regexp"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$8" = "--certificate-oidc-issuer"
+          test "$9" = "https://token.actions.githubusercontent.com"
+          test -f "${10}"
+          EOF
+          chmod +x "$cosign_artifact"
+          cosign_sha="$(sha256_file "$cosign_artifact")"
+
+          create_release() {
+            tag="$1"
+            artifact="$2"
+            release_dir="$tmp/releases/$tag"
+            stage="$tmp/stage-$tag"
+            archive_root="${artifact%.tar.gz}"
+            mkdir -p "$stage/$archive_root"
+            cp target/release/agentmesh "$stage/$archive_root/agentmesh"
+            chmod +x "$stage/$archive_root/agentmesh"
+            tar -C "$stage" -czf "$release_dir/$artifact" "$archive_root"
+            printf '%s  %s\n' "$(sha256_file "$release_dir/$artifact")" "$artifact" >"$release_dir/SHA256SUMS"
+            : >"$release_dir/SHA256SUMS.sig"
+            : >"$release_dir/SHA256SUMS.bundle"
+          }
+
+          stable_artifact="agentmesh-v0.1.0-$platform.tar.gz"
+          nightly_artifact="agentmesh-nightly-$platform.tar.gz"
+          create_release "agentmesh-cli-v0.1.0" "$stable_artifact"
+          create_release "nightly" "$nightly_artifact"
+
+          export AGENTMESH_BASE_URL="file://$tmp/releases"
+          export AGENTMESH_COSIGN_BASE_URL="file://$tmp/cosign-base"
+          export AGENTMESH_COSIGN_SHA256="$cosign_sha"
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-stable" sh installers/install.sh --channel=stable --install-dir="$tmp/shell-stable"
+          "$tmp/shell-stable/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-nightly" sh installers/install.sh --channel=nightly --install-dir="$tmp/shell-nightly"
+          "$tmp/shell-nightly/agentmesh" --version
+
+          e2e_repo="$tmp/e2e-repo"
+          mkdir -p "$e2e_repo/.claude/skills/demo"
+          printf 'Root instructions\n' >"$e2e_repo/CLAUDE.md"
+          printf '%s\n' '---' 'name: demo' '---' 'Demo skill' >"$e2e_repo/.claude/skills/demo/SKILL.md"
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" init --yes --skip-hooks --silent
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" sync --silent
+          test -f "$e2e_repo/.ai/skills/demo/SKILL.md"
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall --yes --purge --silent
+          test ! -e "$e2e_repo/agentmesh.lock"
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-stable" AGENTMESH_CHANNEL=stable AGENTMESH_NPM_BINARY_DIR="$tmp/npm-stable" sh installers/npm/bin/agentmesh --install
+          "$tmp/npm-stable/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-nightly" AGENTMESH_CHANNEL=nightly AGENTMESH_NPM_BINARY_DIR="$tmp/npm-nightly" sh installers/npm/bin/agentmesh --install
+          "$tmp/npm-nightly/agentmesh" --version
+      - name: Verify installer signature paths
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/base"
+          cosign_artifact="$tmp/base/cosign-linux-amd64"
+          cat >"$cosign_artifact" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          test "$#" -eq 10
+          test "$1" = "verify-blob"
+          test "$2" = "--signature"
+          test -f "$3"
+          test "$4" = "--bundle"
+          test -f "$5"
+          test "$6" = "--certificate-identity-regexp"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$8" = "--certificate-oidc-issuer"
+          test "$9" = "https://token.actions.githubusercontent.com"
+          test -f "${10}"
+          EOF
+          chmod +x "$cosign_artifact"
+          cosign_sha="$(sha256sum "$cosign_artifact" | awk '{print $1}')"
+          printf 'placeholder  agentmesh.tar.gz\n' >"$tmp/SHA256SUMS"
+          : >"$tmp/SHA256SUMS.sig"
+          : >"$tmp/SHA256SUMS.bundle"
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
+          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
+            echo "install.sh accepted a mismatched cosign checksum" >&2
+            exit 1
+          fi
+          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
+            echo "npm wrapper accepted a mismatched cosign checksum" >&2
+            exit 1
+          fi
+      - run: npm pack ./installers/npm --dry-run

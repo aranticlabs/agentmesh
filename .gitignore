@@ -10,17 +10,21 @@
 *.swo
 *~
 
+# Documentation
+docs/
+
 # Environment and secrets
 .env
 .env.*
 !.env.example
 !.env.sample
+agentmesh.config.local.yaml
 
 # Logs
 *.log
 logs/
 
-# Node (tooling: Prettier, etc.)
+# Node (installer wrappers)
 node_modules/
 
 # Rust
@@ -40,7 +44,13 @@ coverage/
 *.tar
 *.tar.gz
 
+# Runtime-local overlays
+.claude/settings.local.json
+.codex/hooks.json
+
 # AI
 .claude/
 .codex/
 .cursor/
+CLAUDE.md
+AGENTS.md

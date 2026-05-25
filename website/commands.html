@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentMesh command reference</title>
+    <meta name="description" content="AgentMesh CLI command reference rendered from help output.">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="index.html"><span class="brand-mark">am</span> AgentMesh</a>
+        <div class="nav-links">
+          <a href="index.html#install">Install</a>
+          <a href="commands.html">Commands</a>
+          <a href="adapters.html">Adapters</a>
+          <a href="concepts.html">Concepts</a>
+          <a href="security.html">Security</a>
+          <a href="migration.html">Migration</a>
+        </div>
+      </nav>
+    </header>
+    <main class="content">
+      <section class="page-hero section">
+        <p class="eyebrow">Command reference</p>
+        <h1>CLI help, rendered for the web.</h1>
+        <p class="lede">
+          This page mirrors the public command help surface so release docs and CLI behavior stay
+          aligned.
+        </p>
+      </section>
+
+      <section class="section command-list">
+        <details class="command" open>
+          <summary>agentmesh</summary>
+          <pre><code>Synchronize repository intelligence across AI coding runtimes
+
+Usage: agentmesh [OPTIONS] [COMMAND]
+
+Commands:
+  status          Fast snapshot of current state
+  scan            Report detected runtimes and entities without writing
+  init            Set up AgentMesh in a repository
+  install         Install sync hooks
+  sync            Run a sync pass
+  diff            Show what sync would change
+  apply           Apply pending changes from a previous diff
+  doctor          Run deep health checks
+  restore         Restore a preserved runtime version
+  ack             Acknowledge pending conflict resolution
+  watch           Start the watcher daemon
+  upgrade         Repin integrity to the current binary
+  uninstall       Remove AgentMesh local wiring
+  reconcile-lock  Recover from a textual lockfile merge conflict
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+      --silent         Suppress informational output
+      --no-color       Disable ANSI color output
+      --color &lt;COLOR&gt;  Override color behavior [default: auto] [possible values: auto, always, never]
+      --cwd &lt;CWD&gt;      Run as if invoked from this directory
+  -v, --verbose...     Increase output detail
+  -h, --help           Print help
+  -V, --version        Print version</code></pre>
+        </details>
+
+        <details class="command"><summary>agentmesh status</summary><pre><code>Fast snapshot of current state
+
+Usage: status [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh scan</summary><pre><code>Report detected runtimes and entities without writing
+
+Usage: scan [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh init</summary><pre><code>Set up AgentMesh in a repository
+
+Usage: init [OPTIONS]
+
+Options:
+      --canonical-instructions &lt;CANONICAL_INSTRUCTIONS&gt;
+          Resolve divergent root instructions non-interactively [possible values: AGENTS.md, CLAUDE.md]
+  -y, --yes
+          Skip confirmation prompts
+      --dry-run
+          Print planned actions without writing
+      --skip-hooks
+          Skip runtime hook installation
+  -h, --help
+          Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh install</summary><pre><code>Install sync hooks
+
+Usage: install [OPTIONS]
+
+Options:
+      --runtime &lt;RUNTIME&gt;  Runtime whose hooks should be installed
+      --git-pre-commit     Install the git pre-commit safety-net hook
+      --force              Install despite a managed existing pre-commit hook
+  -y, --yes                Skip confirmation prompts
+      --dry-run            Print planned actions without writing
+  -h, --help               Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh sync</summary><pre><code>Run a sync pass
+
+Usage: sync [OPTIONS]
+
+Options:
+      --check              Report drift without writing
+      --await-drain        Block until the pending queue is empty
+      --trigger &lt;TRIGGER&gt;  Identify the call origin
+  -h, --help               Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh diff</summary><pre><code>Show what sync would change
+
+Usage: diff [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh apply</summary><pre><code>Apply pending changes from a previous diff
+
+Usage: apply
+
+Options:
+  -h, --help  Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh doctor</summary><pre><code>Run deep health checks
+
+Usage: doctor [OPTIONS]
+
+Options:
+      --versions        Print version information only
+      --integrity-only  Verify integrity only
+      --watcher-only    Show watcher status only
+      --json            Emit machine-readable JSON
+  -h, --help            Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh restore</summary><pre><code>Restore a preserved runtime version
+
+Usage: restore [OPTIONS] --from &lt;FROM&gt; &lt;ID&gt;
+
+Arguments:
+  &lt;ID&gt;  Entity identifier to restore
+
+Options:
+      --from &lt;FROM&gt;  Runtime whose preserved version should be restored
+      --at &lt;AT&gt;      Specific preserved timestamp
+      --dry-run      Print planned actions without writing
+  -y, --yes          Skip confirmation prompts
+  -h, --help         Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh ack</summary><pre><code>Acknowledge pending conflict resolution
+
+Usage: ack [OPTIONS] [ID]
+
+Arguments:
+  [ID]  Entity identifier to acknowledge. Omit to acknowledge all
+
+Options:
+  -y, --yes   Skip confirmation prompts
+  -h, --help  Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh watch</summary><pre><code>Start the watcher daemon
+
+Usage: watch [OPTIONS]
+
+Options:
+      --persistent           Do not idle-exit
+      --register-as-service  Register the watcher as a system service
+      --foreground           Run in the foreground
+  -y, --yes                  Skip confirmation prompts
+  -h, --help                 Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh upgrade</summary><pre><code>Repin integrity to the current binary
+
+Usage: upgrade [OPTIONS]
+
+Options:
+      --dry-run  Print planned actions without writing
+  -y, --yes      Skip confirmation prompts
+  -h, --help     Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh uninstall</summary><pre><code>Remove AgentMesh local wiring
+
+Usage: uninstall [OPTIONS]
+
+Options:
+      --purge    Also remove repository-visible AgentMesh state
+      --dry-run  Print planned actions without writing
+  -y, --yes      Skip confirmation prompts
+  -h, --help     Print help</code></pre></details>
+
+        <details class="command"><summary>agentmesh reconcile-lock</summary><pre><code>Recover from a textual lockfile merge conflict
+
+Usage: reconcile-lock
+
+Options:
+  -h, --help  Print help</code></pre></details>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content"><span>Command output is sourced from the CLI help surface.</span></div>
+    </footer>
+  </body>
+</html>

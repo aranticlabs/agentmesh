@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentMesh - Sync AI runtime context</title>
+    <meta
+      name="description"
+      content="AgentMesh synchronizes project-level AI runtime context across Claude Code and Codex."
+    >
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="index.html"><span class="brand-mark">am</span> AgentMesh</a>
+        <div class="nav-links">
+          <a href="index.html#install">Install</a>
+          <a href="commands.html">Commands</a>
+          <a href="adapters.html">Adapters</a>
+          <a href="concepts.html">Concepts</a>
+          <a href="security.html">Security</a>
+          <a href="migration.html">Migration</a>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Project mesh for AI coding runtimes</p>
+          <h1>One repository brain for every coding agent.</h1>
+          <p class="lede">
+            AgentMesh keeps Claude Code and Codex aligned by syncing project instructions,
+            skills, and subagents through a canonical local model and an auditable lockfile.
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="#install">Install AgentMesh</a>
+            <a class="button secondary" href="commands.html">Command reference</a>
+          </div>
+        </div>
+
+        <figure class="mesh-visual" aria-label="AgentMesh synchronization model">
+          <div class="mesh-title">
+            <span>agentmesh.lock</span>
+            <span>local-first sync</span>
+          </div>
+          <div class="mesh-grid">
+            <div class="runtime-stack">
+              <div class="runtime-node">
+                <strong>Claude Code</strong>
+                <span>CLAUDE.md, skills, agents, hooks</span>
+              </div>
+              <div class="runtime-node">
+                <strong>Codex</strong>
+                <span>AGENTS.md, skills, TOML agents, hooks</span>
+              </div>
+            </div>
+            <div class="sync-line" aria-hidden="true">
+              <span>&lt;</span>
+              <span>&gt;</span>
+            </div>
+            <div class="lock-node">
+              <strong>Canonical .ai model</strong>
+              <span>structured merge, rename tracking, recoverable conflicts</span>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><strong>&lt;100ms</strong><span>hook p99 target</span></div>
+            <div class="metric"><strong>0</strong><span>silent overwrites</span></div>
+            <div class="metric"><strong>1</strong><span>static binary</span></div>
+          </div>
+        </figure>
+      </section>
+
+      <section id="install" class="section">
+        <div class="band">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Install</p>
+              <h2>Direct installers plus an npm wrapper.</h2>
+            </div>
+            <p>
+              Release installs verify the archive against the checksum manifest and cosign
+              signature before placing the binary.
+            </p>
+          </div>
+          <div class="install-grid">
+            <div class="install-row">
+              <h3>macOS / Linux</h3>
+              <pre><code>curl -fsSL https://agentmesh.sh/install.sh | sh</code></pre>
+            </div>
+            <div class="install-row">
+              <h3>Windows</h3>
+              <pre><code>irm https://agentmesh.sh/install.ps1 | iex</code></pre>
+            </div>
+            <div class="install-row">
+              <h3>npm</h3>
+              <pre><code>npm install -g @aranticlabs/agentmesh</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="band">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Quickstart</p>
+              <h2>Initialize a repository in under a minute.</h2>
+            </div>
+            <p>
+              Start with inspection, initialize once, then run sync manually or through explicit
+              runtime hooks.
+            </p>
+          </div>
+          <div class="timeline">
+            <div class="step">
+              <div>
+                <h3>Inspect without writing</h3>
+                <pre><code>agentmesh scan
+agentmesh status
+agentmesh doctor</code></pre>
+              </div>
+            </div>
+            <div class="step">
+              <div>
+                <h3>Initialize the project mesh</h3>
+                <pre><code>agentmesh init --yes --skip-hooks</code></pre>
+              </div>
+            </div>
+            <div class="step">
+              <div>
+                <h3>Sync and review drift</h3>
+                <pre><code>agentmesh sync
+agentmesh diff
+agentmesh apply</code></pre>
+              </div>
+            </div>
+            <div class="step">
+              <div>
+                <h3>Install native runtime hooks when ready</h3>
+                <pre><code>agentmesh install --runtime claude
+agentmesh install --runtime codex</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="band">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">What ships in v0.1</p>
+              <h2>Bidirectional sync without becoming an inference proxy.</h2>
+            </div>
+            <p>
+              AgentMesh does not run models, store prompts, or proxy API calls. It only keeps
+              repository context coherent across coding runtimes.
+            </p>
+          </div>
+          <div class="grid">
+            <article class="panel">
+              <span class="tag">Canonical model</span>
+              <h3>Instructions, skills, subagents</h3>
+              <p>
+                Runtime-native files are normalized into a shared `.ai/` entity model and tracked
+                in `agentmesh.lock`.
+              </p>
+            </article>
+            <article class="panel">
+              <span class="tag">Non-destructive</span>
+              <h3>Conflicts stay recoverable</h3>
+              <p>
+                Structured merge handles ordinary drift. Losing versions are preserved in the
+                machine-local cache for restore.
+              </p>
+            </article>
+            <article class="panel">
+              <span class="tag">Explicit trust</span>
+              <h3>Hooks are installed by command</h3>
+              <p>
+                Runtime hooks are never installed silently. Install, upgrade, uninstall, and
+                restore stay explicit user actions.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="content">
+        <span>AgentMesh is MIT licensed.</span>
+        <span><a href="security.html">Security model</a> | <a href="migration.html">Migration</a></span>
+      </div>
+    </footer>
+  </body>
+</html>

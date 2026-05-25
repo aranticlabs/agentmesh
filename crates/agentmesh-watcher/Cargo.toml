@@ -1,0 +1,25 @@
+[package]
+name = "agentmesh-watcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+agentmesh-core.workspace = true
+blake3 = "1.8.5"
+notify = "8"
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+sha2 = "0.11.0"
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

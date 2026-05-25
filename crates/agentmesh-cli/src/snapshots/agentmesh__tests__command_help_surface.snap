@@ -1,0 +1,219 @@
+---
+source: crates/agentmesh-cli/src/main.rs
+expression: command_help_surface()
+---
+## agentmesh
+
+Synchronize repository intelligence across AI coding runtimes
+
+Usage: agentmesh [OPTIONS] [COMMAND]
+
+Commands:
+  status          Fast snapshot of current state
+  scan            Report detected runtimes and entities without writing
+  init            Set up AgentMesh in a repository
+  install         Install sync hooks
+  sync            Run a sync pass
+  diff            Show what sync would change
+  apply           Apply pending changes from a previous diff
+  doctor          Run deep health checks
+  restore         Restore a preserved runtime version
+  ack             Acknowledge pending conflict resolution
+  watch           Start the watcher daemon
+  upgrade         Repin integrity to the current binary
+  uninstall       Remove AgentMesh local wiring
+  reconcile-lock  Recover from a textual lockfile merge conflict
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+      --silent         Suppress informational output
+      --no-color       Disable ANSI color output
+      --color <COLOR>  Override color behavior [default: auto] [possible values: auto, always, never]
+      --cwd <CWD>      Run as if invoked from this directory
+  -v, --verbose...     Increase output detail
+  -h, --help           Print help
+  -V, --version        Print version
+
+
+## agentmesh status
+
+Fast snapshot of current state
+
+Usage: status [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help
+
+
+## agentmesh scan
+
+Report detected runtimes and entities without writing
+
+Usage: scan [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help
+
+
+## agentmesh init
+
+Set up AgentMesh in a repository
+
+Usage: init [OPTIONS]
+
+Options:
+      --canonical-instructions <CANONICAL_INSTRUCTIONS>
+          Resolve divergent root instructions non-interactively [possible values: AGENTS.md, CLAUDE.md]
+  -y, --yes
+          Skip confirmation prompts
+      --dry-run
+          Print planned actions without writing
+      --skip-hooks
+          Skip runtime hook installation
+  -h, --help
+          Print help
+
+
+## agentmesh install
+
+Install sync hooks
+
+Usage: install [OPTIONS]
+
+Options:
+      --runtime <RUNTIME>  Runtime whose hooks should be installed
+      --git-pre-commit     Install the git pre-commit safety-net hook
+      --force              Install despite a managed existing pre-commit hook
+  -y, --yes                Skip confirmation prompts
+      --dry-run            Print planned actions without writing
+  -h, --help               Print help
+
+
+## agentmesh sync
+
+Run a sync pass
+
+Usage: sync [OPTIONS]
+
+Options:
+      --check              Report drift without writing
+      --await-drain        Block until the pending queue is empty
+      --trigger <TRIGGER>  Identify the call origin
+  -h, --help               Print help
+
+
+## agentmesh diff
+
+Show what sync would change
+
+Usage: diff [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON
+  -h, --help  Print help
+
+
+## agentmesh apply
+
+Apply pending changes from a previous diff
+
+Usage: apply
+
+Options:
+  -h, --help  Print help
+
+
+## agentmesh doctor
+
+Run deep health checks
+
+Usage: doctor [OPTIONS]
+
+Options:
+      --versions        Print version information only
+      --integrity-only  Verify integrity only
+      --watcher-only    Show watcher status only
+      --json            Emit machine-readable JSON
+  -h, --help            Print help
+
+
+## agentmesh restore
+
+Restore a preserved runtime version
+
+Usage: restore [OPTIONS] --from <FROM> <ID>
+
+Arguments:
+  <ID>  Entity identifier to restore
+
+Options:
+      --from <FROM>  Runtime whose preserved version should be restored
+      --at <AT>      Specific preserved timestamp
+      --dry-run      Print planned actions without writing
+  -y, --yes          Skip confirmation prompts
+  -h, --help         Print help
+
+
+## agentmesh ack
+
+Acknowledge pending conflict resolution
+
+Usage: ack [OPTIONS] [ID]
+
+Arguments:
+  [ID]  Entity identifier to acknowledge. Omit to acknowledge all
+
+Options:
+  -y, --yes   Skip confirmation prompts
+  -h, --help  Print help
+
+
+## agentmesh watch
+
+Start the watcher daemon
+
+Usage: watch [OPTIONS]
+
+Options:
+      --persistent           Do not idle-exit
+      --register-as-service  Register the watcher as a system service
+      --foreground           Run in the foreground
+  -y, --yes                  Skip confirmation prompts
+  -h, --help                 Print help
+
+
+## agentmesh upgrade
+
+Repin integrity to the current binary
+
+Usage: upgrade [OPTIONS]
+
+Options:
+      --dry-run  Print planned actions without writing
+  -y, --yes      Skip confirmation prompts
+  -h, --help     Print help
+
+
+## agentmesh uninstall
+
+Remove AgentMesh local wiring
+
+Usage: uninstall [OPTIONS]
+
+Options:
+      --purge    Also remove repository-visible AgentMesh state
+      --dry-run  Print planned actions without writing
+  -y, --yes      Skip confirmation prompts
+  -h, --help     Print help
+
+
+## agentmesh reconcile-lock
+
+Recover from a textual lockfile merge conflict
+
+Usage: reconcile-lock
+
+Options:
+  -h, --help  Print help

@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = [
+  "adapters/claude",
+  "adapters/codex",
+  "crates/agentmesh-adapter-sdk-rust",
+  "crates/agentmesh-cli",
+  "crates/agentmesh-core",
+  "crates/agentmesh-protocol",
+  "crates/agentmesh-watcher",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Arantic"]
+repository = "https://github.com/aranticlabs/agentmesh"
+homepage = "https://agentmesh.sh"
+
+[workspace.dependencies]
+agentmesh-adapter-claude = { path = "adapters/claude", version = "0.1.0" }
+agentmesh-adapter-codex = { path = "adapters/codex", version = "0.1.0" }
+agentmesh-adapter-sdk-rust = { path = "crates/agentmesh-adapter-sdk-rust", version = "0.1.0" }
+agentmesh-core = { path = "crates/agentmesh-core", version = "0.1.0" }
+agentmesh-protocol = { path = "crates/agentmesh-protocol", version = "0.1.0" }
+agentmesh-watcher = { path = "crates/agentmesh-watcher", version = "0.1.0" }
+base64 = "0.22.1"
+clap = { version = "4", features = ["derive"] }
+miette = { version = "7", features = ["fancy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_norway = "0.9.42"
+tempfile = "3.27.0"
+thiserror = "2"
+toml = "0.8"
+criterion = "0.7.0"
+insta = "1.43.2"
+proptest = "1.9.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"

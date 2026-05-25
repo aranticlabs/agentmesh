@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentMesh adapters</title>
+    <meta name="description" content="Bundled and future AgentMesh runtime adapters.">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="index.html"><span class="brand-mark">am</span> AgentMesh</a>
+        <div class="nav-links">
+          <a href="index.html#install">Install</a>
+          <a href="commands.html">Commands</a>
+          <a href="adapters.html">Adapters</a>
+          <a href="concepts.html">Concepts</a>
+          <a href="security.html">Security</a>
+          <a href="migration.html">Migration</a>
+        </div>
+      </nav>
+    </header>
+    <main class="content">
+      <section class="page-hero section">
+        <p class="eyebrow">Adapter ecosystem</p>
+        <h1>Bundled adapters first, external adapters later.</h1>
+        <p class="lede">
+          AgentMesh v0.1 ships two first-party adapters compiled into the same binary. The
+          external adapter trust model is reserved for v0.2 and later.
+        </p>
+      </section>
+      <section class="section">
+        <div class="grid two">
+          <article class="panel">
+            <span class="tag">Bundled v0.1</span>
+            <h2>Claude Code</h2>
+            <p>Imports and emits:</p>
+            <ul>
+              <li><code>CLAUDE.md</code></li>
+              <li><code>.claude/skills/&lt;name&gt;/SKILL.md</code></li>
+              <li><code>.claude/agents/&lt;name&gt;.md</code></li>
+              <li><code>.claude/settings.local.json</code> hook entries</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="tag">Bundled v0.1</span>
+            <h2>Codex</h2>
+            <p>Imports and emits:</p>
+            <ul>
+              <li><code>AGENTS.md</code></li>
+              <li><code>.codex/skills/&lt;name&gt;/SKILL.md</code></li>
+              <li><code>.codex/agents/&lt;name&gt;.toml</code></li>
+              <li><code>.codex/hooks.json</code> hook entries</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section class="section">
+        <div class="panel">
+          <h2>External adapters</h2>
+          <p>
+            v0.2 introduces the adapter directory and third-party trust tiers. v0.1 keeps runtime
+            parsing and emitting inside first-party Rust crates so the release can harden the core
+            protocol before expanding the ecosystem.
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content"><span>AgentMesh adapters are part of the single static binary in v0.1.</span></div>
+    </footer>
+  </body>
+</html>

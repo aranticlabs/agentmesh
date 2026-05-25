@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentMesh security model</title>
+    <meta name="description" content="AgentMesh verification, hook integrity, and sync safety model.">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="index.html"><span class="brand-mark">am</span> AgentMesh</a>
+        <div class="nav-links">
+          <a href="index.html#install">Install</a>
+          <a href="commands.html">Commands</a>
+          <a href="adapters.html">Adapters</a>
+          <a href="concepts.html">Concepts</a>
+          <a href="security.html">Security</a>
+          <a href="migration.html">Migration</a>
+        </div>
+      </nav>
+    </header>
+    <main class="content">
+      <section class="page-hero section">
+        <p class="eyebrow">Security model</p>
+        <h1>Explicit trust boundaries for files that agents execute.</h1>
+        <p class="lede">
+          AgentMesh is local-first, but hooks run on every relevant runtime event. The security
+          model keeps hook installation explicit and binary identity pinned.
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="grid two">
+          <article class="panel">
+            <span class="tag">Distribution</span>
+            <h2>Verified release artifacts</h2>
+            <p>
+              Installer channels download platform archives, verify SHA-256 entries from
+              `SHA256SUMS`, and verify the manifest signature and bundle with cosign before
+              installation.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag">Hooks</span>
+            <h2>Machine-local integrity pins</h2>
+            <p>
+              Hook records point at an absolute binary path and the repository cache records the
+              expected binary hash. `agentmesh upgrade` repins after a deliberate binary change.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag">Sync</span>
+            <h2>No prompts during sync</h2>
+            <p>
+              Hook, watcher, manual sync, and drainer paths must not stop for prompts. Ambiguous or
+              risky choices are made at init, install, restore, upgrade, or uninstall time.
+            </p>
+          </article>
+          <article class="panel">
+            <span class="tag">Recovery</span>
+            <h2>No silent overwrites</h2>
+            <p>
+              Conflicting versions are preserved in the machine-local cache and surfaced through
+              `doctor`, `restore`, and `ack` instead of being discarded.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Mitigation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Unexpected binary on PATH</td>
+              <td>Hook integrity pins store the absolute binary path and expected SHA-256.</td>
+            </tr>
+            <tr>
+              <td>Runtime adapter writes outside its surface</td>
+              <td>Adapters declare readable and writable paths, and core enforces boundaries.</td>
+            </tr>
+            <tr>
+              <td>Installer tampering</td>
+              <td>Archives are checked against signed checksum manifests before installation.</td>
+            </tr>
+            <tr>
+              <td>Destructive uninstall</td>
+              <td>Uninstall removes AgentMesh-owned wiring and keeps purge explicit.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content"><span>AgentMesh keeps repository files auditable by default.</span></div>
+    </footer>
+  </body>
+</html>
