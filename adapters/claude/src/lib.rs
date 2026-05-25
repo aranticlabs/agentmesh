@@ -356,7 +356,16 @@ fn import_skills(
         let mut files = BTreeMap::new();
         collect_entity_files(&path, &path, &mut files)?;
         let content = read_to_string(&source_path)?;
-        let frontmatter = frontmatter_json(&content)?;
+        let frontmatter = match frontmatter_json_for_path(&source_relative, &content) {
+            Ok(frontmatter) => frontmatter,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: source_relative,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
 
         entities.push(ImportedEntity {
             id: format!("skill:{slug}"),
@@ -404,7 +413,7 @@ fn import_subagents(
         };
         let slug = slugify(stem);
 
-        entities.push(import_markdown_entity(
+        let entity = match import_markdown_entity(
             workspace_root,
             &path,
             EntityType::Subagent,
@@ -412,7 +421,17 @@ fn import_subagents(
             None,
             PathBuf::from("agents").join(format!("{slug}.md")),
             source_relative,
-        )?);
+        ) {
+            Ok(entity) => entity,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: workspace_relative(workspace_root, &path)?,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        entities.push(entity);
     }
 
     Ok(())
@@ -428,7 +447,7 @@ fn import_markdown_entity(
     source_path: PathBuf,
 ) -> agentmesh_adapter_sdk_rust::Result<ImportedEntity> {
     let content = read_to_string(path)?;
-    let frontmatter = frontmatter_json(&content)?;
+    let frontmatter = frontmatter_json_for_path(&source_path, &content)?;
     let files = BTreeMap::from([(
         canonical_path
             .file_name()
@@ -518,6 +537,21 @@ fn frontmatter_json(
 ) -> agentmesh_adapter_sdk_rust::Result<BTreeMap<String, JsonValue>> {
     let document = parse_frontmatter(content)?;
     yaml_mapping_to_json(&document.frontmatter)
+}
+
+fn frontmatter_json_for_path(
+    source_path: &Path,
+    content: &str,
+) -> agentmesh_adapter_sdk_rust::Result<BTreeMap<String, JsonValue>> {
+    frontmatter_json(content).map_err(|error| {
+        AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!(
+                "failed to parse frontmatter in {}: {error}",
+                source_path.display()
+            ),
+        )
+    })
 }
 
 fn yaml_mapping_to_json(
@@ -704,6 +738,56 @@ mod tests {
                 .unwrap_or_else(|error| panic!("asset should decode: {error}")),
             vec![0, 159, 146, 150]
         );
+    }
+
+    #[test]
+    fn import_skips_claude_entities_with_malformed_frontmatter() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(root.join("CLAUDE.md"), "# Instructions\n");
+        write(
+            root.join(".claude/skills/good/SKILL.md"),
+            "---\nname: good\n---\nBody\n",
+        );
+        write(
+            root.join(".claude/skills/bad/SKILL.md"),
+            "---\ndescription: bad: value\n---\nBody\n",
+        );
+        write(
+            root.join(".claude/agents/bad-agent.md"),
+            "---\ndescription: bad: value\n---\nReview code.\n",
+        );
+
+        let adapter = ClaudeAdapter;
+        let imported = match adapter.import(ImportRequest {
+            canonical_dir: root.join(".ai"),
+            runtime_dir: root.join(".claude"),
+            filter: None,
+        }) {
+            Ok(imported) => imported,
+            Err(error) => panic!("import should skip malformed entities: {error}"),
+        };
+
+        let ids = imported
+            .entities
+            .iter()
+            .map(|entity| entity.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"instructions:root"));
+        assert!(ids.contains(&"skill:good"));
+        assert!(!ids.contains(&"skill:bad"));
+        assert_eq!(imported.skipped.len(), 2);
+        assert!(imported.skipped.iter().any(|skipped| {
+            skipped.path == Path::new(".claude/skills/bad/SKILL.md")
+                && skipped.reason.contains("failed to parse frontmatter")
+        }));
+        assert!(imported.skipped.iter().any(|skipped| {
+            skipped.path == Path::new(".claude/agents/bad-agent.md")
+                && skipped.reason.contains("failed to parse frontmatter")
+        }));
     }
 
     #[test]
