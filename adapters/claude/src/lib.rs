@@ -935,14 +935,23 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use agentmesh_adapter_sdk_rust::Adapter;
+    use agentmesh_adapter_sdk_rust::{Adapter, canonicalize_frontmatter};
     use agentmesh_protocol::{
-        EmitEntity, EmitRequest, EntityFile, EntityFileEncoding, ImportRequest,
+        EmitEntity, EmitRequest, EntityFile, EntityFileEncoding, ImportRequest, ImportedEntity,
         InstallHooksRequest, RemoveHooksRequest, RuntimeMode,
     };
+    use proptest::prelude::*;
     use serde_json::json;
 
     use super::ClaudeAdapter;
+
+    type SemanticEntity = (
+        String,
+        agentmesh_protocol::EntityType,
+        Option<String>,
+        BTreeMap<PathBuf, EntityFile>,
+        BTreeMap<String, serde_json::Value>,
+    );
 
     fn file(content: &str) -> EntityFile {
         EntityFile {
@@ -1179,6 +1188,107 @@ mod tests {
             "$.hooks.PostToolUse[0]"
         );
         assert_eq!(hook_count, 1);
+    }
+
+    proptest! {
+        #[test]
+        fn skill_import_emit_import_roundtrip_preserves_entity_shape(
+            slug in "[a-z][a-z0-9]{0,8}(-[a-z0-9]{1,8}){0,2}",
+            body in prop::collection::vec("[A-Za-z0-9 .,]{0,40}", 1..4).prop_map(|lines| lines.join("\n")),
+        ) {
+            let temp = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("tempdir should be available: {error}"));
+            let root = temp.path();
+            write(
+                root.join("CLAUDE.md"),
+                &format!("Root instructions\n{body}\n"),
+            );
+            write(
+                root.join(format!(".claude/skills/{slug}/SKILL.md")),
+                &format!("---\nname: {slug}\ntags:\n  - generated\n---\n{body}\n"),
+            );
+            write(
+                root.join(format!(".claude/agents/{slug}-agent.md")),
+                &format!("---\nname: {slug}-agent\ndescription: Generated\n---\n{body}\n"),
+            );
+
+            let adapter = ClaudeAdapter;
+            let imported = adapter
+                .import(ImportRequest {
+                    canonical_dir: root.join(".ai"),
+                    runtime_dir: root.join(".claude"),
+                    filter: None,
+                })
+                .unwrap_or_else(|error| panic!("import should succeed: {error}"));
+            let emit_entities = emit_entities(imported.entities.clone());
+
+            adapter
+                .emit(EmitRequest {
+                    runtime_dir: root.join(".claude-roundtrip"),
+                    mode: RuntimeMode::Managed,
+                    entities: emit_entities,
+                })
+                .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+            let roundtripped = adapter
+                .import(ImportRequest {
+                    canonical_dir: root.join(".ai"),
+                    runtime_dir: root.join(".claude-roundtrip"),
+                    filter: None,
+                })
+                .unwrap_or_else(|error| panic!("roundtrip import should succeed: {error}"));
+
+            prop_assert_eq!(
+                semantic_entities(imported.entities),
+                semantic_entities(roundtripped.entities)
+            );
+        }
+    }
+
+    fn emit_entities(entities: Vec<ImportedEntity>) -> Vec<EmitEntity> {
+        entities
+            .into_iter()
+            .map(|entity| EmitEntity {
+                id: entity.id,
+                entity_type: entity.entity_type,
+                scope: entity.scope,
+                files: entity.files,
+                frontmatter: entity.frontmatter,
+                overrides: BTreeMap::new(),
+            })
+            .collect()
+    }
+
+    fn semantic_entities(entities: Vec<ImportedEntity>) -> Vec<SemanticEntity> {
+        let mut normalized = entities
+            .into_iter()
+            .map(|entity| {
+                (
+                    entity.id,
+                    entity.entity_type,
+                    entity.scope,
+                    normalize_files(entity.files),
+                    entity.frontmatter,
+                )
+            })
+            .collect::<Vec<_>>();
+        normalized.sort_by(|left, right| left.0.cmp(&right.0));
+        normalized
+    }
+
+    fn normalize_files(files: BTreeMap<PathBuf, EntityFile>) -> BTreeMap<PathBuf, EntityFile> {
+        files
+            .into_iter()
+            .map(|(path, file)| {
+                if file.encoding == EntityFileEncoding::Utf8 {
+                    let content = canonicalize_frontmatter(&file.content)
+                        .unwrap_or_else(|_| file.content.clone());
+                    (path, EntityFile::utf8(content))
+                } else {
+                    (path, file)
+                }
+            })
+            .collect()
     }
 
     fn write(path: impl AsRef<Path>, content: &str) {

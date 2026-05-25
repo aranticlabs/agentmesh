@@ -10,7 +10,10 @@ channel="${AGENTMESH_CHANNEL:-stable}"
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 binary_dir="${AGENTMESH_NPM_BINARY_DIR:-$script_dir/../agentmesh-bin}"
-binary_path="$binary_dir/agentmesh"
+case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
+  msys*|mingw*|cygwin*) binary_path="$binary_dir/agentmesh.exe" ;;
+  *) binary_path="$binary_dir/agentmesh" ;;
+esac
 
 sha256_file() {
   file="$1"
@@ -41,12 +44,31 @@ fetch_url() {
   exit 1
 }
 
+detect_linux_abi() {
+  if command -v ldd >/dev/null 2>&1; then
+    ldd_version="$(ldd --version 2>&1 || true)"
+    if printf '%s' "$ldd_version" | grep -qi musl; then
+      printf 'unknown-linux-musl\n'
+      return
+    fi
+    if [ -n "$ldd_version" ]; then
+      printf 'unknown-linux-gnu\n'
+      return
+    fi
+  fi
+  if ls /lib/ld-musl-*.so.1 /usr/lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+    printf 'unknown-linux-musl\n'
+    return
+  fi
+  printf 'unknown-linux-gnu\n'
+}
+
 detect_platform() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
   case "$os" in
     darwin) os="apple-darwin" ;;
-    linux) os="unknown-linux-gnu" ;;
+    linux) os="$(detect_linux_abi)" ;;
     msys*|mingw*|cygwin*) os="pc-windows-msvc" ;;
     *) echo "unsupported operating system: $os" >&2; exit 1 ;;
   esac
@@ -55,6 +77,10 @@ detect_platform() {
     arm64|aarch64) arch="aarch64" ;;
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
   esac
+  if [ "$os" = "unknown-linux-musl" ] && [ "$arch" = "aarch64" ]; then
+    echo "unsupported platform: aarch64-unknown-linux-musl" >&2
+    exit 1
+  fi
   printf '%s-%s\n' "$arch" "$os"
 }
 
@@ -289,12 +315,13 @@ install_binary() {
   verify_sha256sums "$workdir/$artifact" "$workdir/SHA256SUMS" "$artifact"
   mkdir -p "$workdir/extract" "$binary_dir"
   safe_extract_archive "$workdir/$artifact" "$workdir/extract"
-  found="$workdir/extract/agentmesh"
+  binary_name="$(basename "$binary_path")"
+  found="$workdir/extract/agentmesh/$binary_name"
   if [ ! -f "$found" ] || [ -L "$found" ]; then
-    found="$(find "$workdir/extract" -type f -name agentmesh -print | head -n 1)"
+    found="$(find "$workdir/extract" -type f -name "$binary_name" -print | head -n 1)"
   fi
   if [ -z "$found" ] || [ ! -f "$found" ]; then
-    echo "agentmesh binary not found in $artifact" >&2
+    echo "$binary_name binary not found in $artifact" >&2
     exit 1
   fi
   chmod +x "$found"

@@ -30,6 +30,23 @@ jobs:
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace
       - run: cargo bench --workspace --all-features --no-run
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins
+      - if: matrix.os == 'ubuntu-latest'
+        run: AGENTMESH_FULL_SYNC_BUDGET_SECONDS=5 AGENTMESH_HOOK_P99_BUDGET_MS=100 cargo test --release -p agentmesh-core --test performance_budgets --all-features -- --ignored
+
+  musl:
+    name: rust (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agentmesh-cli
+      - run: target/x86_64-unknown-linux-musl/release/agentmesh --version
 
   supply-chain:
     name: supply-chain
@@ -55,8 +72,172 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p agentmesh-cli
       - run: sh installers/install.sh --smoke
       - run: sh installers/install.sh --upgrade-help
+      - name: Verify musl installer platform detection
+        run: |
+          python_bin="$(command -v python || command -v python3)"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/bin"
+          cat >"$tmp/bin/ldd" <<'EOF'
+          #!/usr/bin/env sh
+          echo 'musl libc (x86_64)'
+          EOF
+          chmod +x "$tmp/bin/ldd"
+
+          cat >"$tmp/bin/uname" <<'EOF'
+          #!/usr/bin/env sh
+          case "$1" in
+            -s) echo Linux ;;
+            -m) echo "${AGENTMESH_TEST_UNAME_M:-x86_64}" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod +x "$tmp/bin/uname"
+
+          shell_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/install.sh --print-platform)"
+          test "$shell_musl" = "x86_64-unknown-linux-musl"
+          npm_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/npm/bin/agentmesh --print-platform)"
+          test "$npm_musl" = "x86_64-unknown-linux-musl"
+
+          if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/install.sh --print-platform >/dev/null 2>&1; then
+            exit 1
+          fi
+          if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/npm/bin/agentmesh --print-platform >/dev/null 2>&1; then
+            exit 1
+          fi
+
+          "$python_bin" - <<'PY'
+          import subprocess
+          import sys
+          import platform
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("installers/pip")))
+          import agentmesh_wrapper
+
+          class Completed:
+              stdout = "musl libc (x86_64)"
+
+          original_system = platform.system
+          original_machine = platform.machine
+          original_run = subprocess.run
+          try:
+              platform.system = lambda: "Linux"
+              subprocess.run = lambda *args, **kwargs: Completed()
+              platform.machine = lambda: "x86_64"
+              assert agentmesh_wrapper.detect_platform() == "x86_64-unknown-linux-musl"
+              platform.machine = lambda: "aarch64"
+              try:
+                  agentmesh_wrapper.detect_platform()
+              except SystemExit as error:
+                  assert "aarch64-unknown-linux-musl" in str(error)
+              else:
+                  raise AssertionError("aarch64 musl should be rejected")
+          finally:
+              platform.system = original_system
+              platform.machine = original_machine
+              subprocess.run = original_run
+          PY
+      - name: Verify cross-channel installer flows
+        run: |
+          python_bin="$(command -v python || command -v python3)"
+          sha256_file() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1" | awk '{print $1}'
+            else
+              shasum -a 256 "$1" | awk '{print $1}'
+            fi
+          }
+
+          stable="$(sh installers/install.sh --print-url --channel=stable)"
+          nightly="$(sh installers/install.sh --print-url --channel=nightly)"
+          case "$stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
+          npm_stable="$(AGENTMESH_CHANNEL=stable sh installers/npm/bin/agentmesh --print-url)"
+          npm_nightly="$(AGENTMESH_CHANNEL=nightly sh installers/npm/bin/agentmesh --print-url)"
+          case "$npm_stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$npm_nightly" in */nightly/*) ;; *) exit 1 ;; esac
+          pip_stable="$(AGENTMESH_CHANNEL=stable "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --print-url)"
+          pip_nightly="$(AGENTMESH_CHANNEL=nightly "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --print-url)"
+          case "$pip_stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$pip_nightly" in */nightly/*) ;; *) exit 1 ;; esac
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          platform="$(sh installers/install.sh --print-platform)"
+          mkdir -p "$tmp/releases/agentmesh-cli-v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
+
+          cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
+          cat >"$cosign_artifact" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          test "$#" -eq 10
+          test "$1" = "verify-blob"
+          test "$2" = "--signature"
+          test -f "$3"
+          test "$4" = "--bundle"
+          test -f "$5"
+          test "$6" = "--certificate-identity-regexp"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$8" = "--certificate-oidc-issuer"
+          test "$9" = "https://token.actions.githubusercontent.com"
+          test -f "${10}"
+          EOF
+          chmod +x "$cosign_artifact"
+          cosign_sha="$(sha256_file "$cosign_artifact")"
+
+          create_release() {
+            tag="$1"
+            artifact="$2"
+            release_dir="$tmp/releases/$tag"
+            stage="$tmp/stage-$tag"
+            mkdir -p "$stage/agentmesh"
+            cp target/release/agentmesh "$stage/agentmesh/agentmesh"
+            chmod +x "$stage/agentmesh/agentmesh"
+            tar -C "$stage" -czf "$release_dir/$artifact" agentmesh
+            printf '%s  %s\n' "$(sha256_file "$release_dir/$artifact")" "$artifact" >"$release_dir/SHA256SUMS"
+            : >"$release_dir/SHA256SUMS.sig"
+            : >"$release_dir/SHA256SUMS.bundle"
+          }
+
+          stable_artifact="agentmesh-v0.1.0-$platform.tar.gz"
+          nightly_artifact="agentmesh-nightly-$platform.tar.gz"
+          create_release "agentmesh-cli-v0.1.0" "$stable_artifact"
+          create_release "nightly" "$nightly_artifact"
+
+          export AGENTMESH_BASE_URL="file://$tmp/releases"
+          export AGENTMESH_COSIGN_BASE_URL="file://$tmp/cosign-base"
+          export AGENTMESH_COSIGN_SHA256="$cosign_sha"
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-stable" sh installers/install.sh --channel=stable --install-dir="$tmp/shell-stable"
+          "$tmp/shell-stable/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-nightly" sh installers/install.sh --channel=nightly --install-dir="$tmp/shell-nightly"
+          "$tmp/shell-nightly/agentmesh" --version
+
+          e2e_repo="$tmp/e2e-repo"
+          mkdir -p "$e2e_repo/.claude/skills/demo"
+          printf 'Root instructions\n' >"$e2e_repo/CLAUDE.md"
+          printf '%s\n' '---' 'name: demo' '---' 'Demo skill' >"$e2e_repo/.claude/skills/demo/SKILL.md"
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" init --yes --skip-hooks --silent
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" sync --silent
+          test -f "$e2e_repo/.ai/skills/demo/SKILL.md"
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall --yes --purge --silent
+          test ! -e "$e2e_repo/agentmesh.lock"
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-stable" AGENTMESH_CHANNEL=stable AGENTMESH_NPM_BINARY_DIR="$tmp/npm-stable" sh installers/npm/bin/agentmesh --install
+          "$tmp/npm-stable/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-nightly" AGENTMESH_CHANNEL=nightly AGENTMESH_NPM_BINARY_DIR="$tmp/npm-nightly" sh installers/npm/bin/agentmesh --install
+          "$tmp/npm-nightly/agentmesh" --version
+
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-pip-stable" AGENTMESH_CHANNEL=stable AGENTMESH_PIP_BINARY_DIR="$tmp/pip-stable" "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --install
+          "$tmp/pip-stable/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-pip-nightly" AGENTMESH_CHANNEL=nightly AGENTMESH_PIP_BINARY_DIR="$tmp/pip-nightly" "$python_bin" -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --install
+          "$tmp/pip-nightly/agentmesh" --version
       - name: Verify installer signature paths
         run: |
           python_bin="$(command -v python || command -v python3)"

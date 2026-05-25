@@ -2,19 +2,39 @@
 name = "agentmesh-fuzz"
 version = "0.0.0"
 edition = "2024"
+rust-version = "1.85"
 publish = false
 
 [package.metadata]
 cargo-fuzz = true
 
+[workspace]
+resolver = "3"
+
 [dependencies]
+agentmesh-adapter-sdk-rust = { path = "../crates/agentmesh-adapter-sdk-rust" }
 agentmesh-core = { path = "../crates/agentmesh-core" }
+agentmesh-protocol = { path = "../crates/agentmesh-protocol" }
 libfuzzer-sys = "0.4"
 serde_yml = "0.0.12"
 
 [[bin]]
 name = "lockfile_parse"
 path = "fuzz_targets/lockfile_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_rpc_framing"
+path = "fuzz_targets/json_rpc_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frontmatter_parse"
+path = "fuzz_targets/frontmatter_parse.rs"
 test = false
 doc = false
 bench = false

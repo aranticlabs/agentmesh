@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import glob
 import os
 import platform
 import shutil
@@ -35,13 +36,36 @@ COSIGN_DIGESTS = {
 }
 
 
+def detect_linux_abi() -> str:
+    try:
+        completed = subprocess.run(
+            ["ldd", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        if "musl" in completed.stdout.lower():
+            return "unknown-linux-musl"
+        if completed.stdout:
+            return "unknown-linux-gnu"
+    except OSError:
+        pass
+
+    for pattern in ("/lib/ld-musl-*.so.1", "/usr/lib/ld-musl-*.so.1"):
+        if glob.glob(pattern):
+            return "unknown-linux-musl"
+
+    return "unknown-linux-gnu"
+
+
 def detect_platform() -> str:
     system = platform.system().lower()
     machine = platform.machine().lower()
     if system == "darwin":
         os_name = "apple-darwin"
     elif system == "linux":
-        os_name = "unknown-linux-gnu"
+        os_name = detect_linux_abi()
     elif system.startswith(("msys", "mingw", "cygwin")) or system == "windows":
         os_name = "pc-windows-msvc"
     else:
@@ -53,6 +77,9 @@ def detect_platform() -> str:
         arch = "aarch64"
     else:
         raise SystemExit(f"unsupported architecture: {machine}")
+
+    if os_name == "unknown-linux-musl" and arch == "aarch64":
+        raise SystemExit("unsupported platform: aarch64-unknown-linux-musl")
 
     return f"{arch}-{os_name}"
 

@@ -39,5 +39,13 @@ harness = false
 name = "hook_hot_path_bench"
 harness = false
 
+[[bench]]
+name = "full_sync_bench"
+harness = false
+
+[[bench]]
+name = "lockfile_bench"
+harness = false
+
 [lints]
 workspace = true

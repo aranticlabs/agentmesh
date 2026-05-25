@@ -36,13 +36,32 @@ fetch_url() {
   exit 1
 }
 
+detect_linux_abi() {
+  if command -v ldd >/dev/null 2>&1; then
+    ldd_version="$(ldd --version 2>&1 || true)"
+    if printf '%s' "$ldd_version" | grep -qi musl; then
+      printf 'unknown-linux-musl\n'
+      return
+    fi
+    if [ -n "$ldd_version" ]; then
+      printf 'unknown-linux-gnu\n'
+      return
+    fi
+  fi
+  if ls /lib/ld-musl-*.so.1 /usr/lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+    printf 'unknown-linux-musl\n'
+    return
+  fi
+  printf 'unknown-linux-gnu\n'
+}
+
 detect_platform() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
 
   case "$os" in
     darwin) os="apple-darwin" ;;
-    linux) os="unknown-linux-gnu" ;;
+    linux) os="$(detect_linux_abi)" ;;
     msys*|mingw*|cygwin*) os="pc-windows-msvc" ;;
     *)
       echo "unsupported operating system: $os" >&2
@@ -58,6 +77,11 @@ detect_platform() {
       exit 1
       ;;
   esac
+
+  if [ "$os" = "unknown-linux-musl" ] && [ "$arch" = "aarch64" ]; then
+    echo "unsupported platform: aarch64-unknown-linux-musl" >&2
+    exit 1
+  fi
 
   printf '%s-%s\n' "$arch" "$os"
 }
@@ -318,6 +342,10 @@ safe_extract_archive() {
 install_archive() {
   platform="$(detect_platform)"
   artifact="$(artifact_name "$platform")"
+  binary_name="agentmesh"
+  case "$platform" in
+    *windows*) binary_name="agentmesh.exe" ;;
+  esac
   tag="$(release_tag)"
   workdir="$(make_workdir)"
   trap 'rm -rf "$workdir"' EXIT HUP INT TERM
@@ -334,19 +362,19 @@ install_archive() {
   verify_sha256sums "$archive" "$manifest" "$artifact"
 
   safe_extract_archive "$archive" "$workdir/extract"
-  binary="$workdir/extract/agentmesh"
+  binary="$workdir/extract/agentmesh/$binary_name"
   if [ ! -f "$binary" ] || [ -L "$binary" ]; then
-    binary="$(find "$workdir/extract" -type f -name agentmesh -print | head -n 1)"
+    binary="$(find "$workdir/extract" -type f -name "$binary_name" -print | head -n 1)"
   fi
   if [ -z "$binary" ] || [ ! -f "$binary" ]; then
-    echo "agentmesh binary not found in $artifact" >&2
+    echo "$binary_name binary not found in $artifact" >&2
     exit 1
   fi
 
   mkdir -p "$install_dir"
   chmod +x "$binary"
-  cp "$binary" "$install_dir/agentmesh"
-  echo "Installed agentmesh to $install_dir/agentmesh"
+  cp "$binary" "$install_dir/$binary_name"
+  echo "Installed agentmesh to $install_dir/$binary_name"
   case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *)
