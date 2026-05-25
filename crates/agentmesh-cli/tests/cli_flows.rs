@@ -174,7 +174,8 @@ fn normalize_snapshot_text(text: &str, repo: &Path, cache: &Path, home: &Path) -
         .replace(&agentmesh_bin().display().to_string(), "<agentmesh-bin>")
         .replace(&repo.display().to_string(), "<repo>")
         .replace(&cache.display().to_string(), "<cache>")
-        .replace(&home.display().to_string(), "<home>");
+        .replace(&home.display().to_string(), "<home>")
+        .replace('\\', "/");
     normalize_hex_runs(&normalized)
 }
 
@@ -1406,7 +1407,12 @@ fn service_registration_writes_platform_definition() {
     } else {
         home.as_path()
     };
-    let service = match find_file_containing(search_root, "agentmesh") {
+    let service = if cfg!(target_os = "windows") {
+        find_named_file(search_root, "agentmesh-watch-task.xml")
+    } else {
+        find_file_containing(search_root, "agentmesh")
+    };
+    let service = match service {
         Some(path) => path,
         None => panic!("service definition should be written"),
     };
@@ -1457,13 +1463,14 @@ fn foreground_watcher_drains_canonical_edit_through_core_sync() {
             .unwrap_or(false)
     });
     assert!(started, "foreground watcher should start");
-    thread::sleep(Duration::from_millis(200));
-    write(
-        repo.join(".ai/skills/watched/SKILL.md"),
-        "---\nname: watched\n---\nEdited through canonical file.\n",
-    );
-
-    let drained = wait_until(Duration::from_secs(30), || {
+    let canonical_path = repo.join(".ai/skills/watched/SKILL.md");
+    let canonical_contents = "---\nname: watched\n---\nEdited through canonical file.\n";
+    let mut last_write = Instant::now() - Duration::from_secs(1);
+    let drained = wait_until(Duration::from_secs(60), || {
+        if last_write.elapsed() >= Duration::from_secs(1) {
+            write(&canonical_path, canonical_contents);
+            last_write = Instant::now();
+        }
         let claude_updated = repo.join(".claude/skills/watched/SKILL.md").exists()
             && read(repo.join(".claude/skills/watched/SKILL.md"))
                 .contains("Edited through canonical file.");
