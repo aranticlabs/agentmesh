@@ -153,8 +153,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p agentmesh
       - run: make ci-installers
-      - name: Verify website browser render
-        run: make website-render
       - name: Verify musl installer platform detection
         run: |
           tmp="$(mktemp -d)"

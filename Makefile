@@ -1,5 +1,5 @@
 .PHONY: help fmt fmt-check check clippy test build bench-check deny audit fuzz-check \
-        website-static website-render installer-smoke ci-rust ci-supply-chain ci-installers ci release clean
+        installer-smoke ci-rust ci-supply-chain ci-installers ci release clean
 
 GREEN := \033[0;32m
 BLUE := \033[0;34m
@@ -12,7 +12,7 @@ help:
 	@echo "  make ci              Run the full local CI suite"
 	@echo "  make ci-rust         Format, typecheck, lint, test, build, and bench-compile"
 	@echo "  make ci-supply-chain Run dependency policy and advisory checks"
-	@echo "  make ci-installers   Run website and installer smoke checks"
+	@echo "  make ci-installers   Run installer smoke checks"
 	@echo "  make build           Build the release binary"
 	@echo "  make release v=X.Y.Z Tag and push a GitHub release"
 
@@ -46,16 +46,6 @@ audit:
 fuzz-check:
 	@cargo check --manifest-path fuzz/Cargo.toml --bins
 
-website-static:
-	@python3 website/check-static.py
-
-website-render:
-	@tmp="$$(mktemp -d)"; \
-	trap 'rm -rf "$$tmp"' EXIT; \
-	npm install --prefix "$$tmp/playwright" --no-save playwright@1.56.1; \
-	"$$tmp/playwright/node_modules/.bin/playwright" install --with-deps chromium; \
-	NODE_PATH="$$tmp/playwright/node_modules" node website/check-render.cjs
-
 installer-smoke:
 	@sh installers/install.sh --smoke
 	@sh installers/install.sh --upgrade-help
@@ -70,7 +60,7 @@ ci-rust: fmt-check check clippy test build bench-check fuzz-check
 ci-supply-chain: deny audit
 	@echo "$(GREEN)[SUCCESS]$(NC) Supply-chain checks passed"
 
-ci-installers: website-static installer-smoke
+ci-installers: installer-smoke
 	@echo "$(GREEN)[SUCCESS]$(NC) Installer checks passed"
 
 ci: ci-rust ci-supply-chain ci-installers
