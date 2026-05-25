@@ -1,0 +1,18 @@
+{
+  "lineWidth": 100,
+  "markdown": {
+    "lineWidth": 100
+  },
+  "excludes": [
+    "**/node_modules",
+    "**/target",
+    "**/dist",
+    "**/build",
+    "**/coverage",
+    "**/Cargo.lock",
+    "docs/**"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/markdown-0.22.1.wasm"
+  ]
+}
