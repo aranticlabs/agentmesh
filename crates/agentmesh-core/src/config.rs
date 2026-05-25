@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use serde_yml::Value;
+use serde_norway::Value;
 use thiserror::Error;
 
 use crate::types::RuntimeName;
@@ -35,7 +35,7 @@ pub enum ConfigError {
         path: PathBuf,
         /// Source parse error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// A known field has an invalid value.
     #[error("invalid config value: {message}")]
@@ -281,17 +281,18 @@ pub fn parse_config(contents: &str) -> Result<ConfigLoad> {
 }
 
 fn parse_config_at(contents: &str, path: &Path) -> Result<ConfigLoad> {
-    let raw = serde_yml::from_str::<Value>(contents).map_err(|source| ConfigError::Parse {
+    let raw = serde_norway::from_str::<Value>(contents).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
         source,
     })?;
     validate_json_schema(&raw, path)?;
     let warnings = collect_unknown_key_warnings(&raw);
-    let config =
-        serde_yml::from_str::<AgentmeshConfig>(contents).map_err(|source| ConfigError::Parse {
+    let config = serde_norway::from_str::<AgentmeshConfig>(contents).map_err(|source| {
+        ConfigError::Parse {
             path: path.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     config.validate()?;
 
     Ok(ConfigLoad { config, warnings })
@@ -388,7 +389,7 @@ fn collect_runtime_maps(
         return;
     };
 
-    for (runtime, value) in &mapping.map {
+    for (runtime, value) in mapping.iter() {
         let Some(runtime) = runtime.as_str() else {
             continue;
         };
@@ -406,7 +407,7 @@ fn collect_object_unknowns(
         return;
     };
 
-    for (key, _) in &mapping.map {
+    for (key, _) in mapping.iter() {
         let Some(key) = key.as_str() else {
             continue;
         };

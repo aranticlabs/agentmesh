@@ -85,7 +85,7 @@ pub enum WatcherError {
         path: PathBuf,
         /// Source parse error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// A required platform directory is unavailable.
     #[error("cannot determine watcher cache directory")]
@@ -894,12 +894,13 @@ impl SelfWriteIndex {
                 });
             }
         };
-        let lockfile = serde_yml::from_str::<SuppressionLockfile>(&contents).map_err(|source| {
-            WatcherError::ParseLockfile {
-                path: lockfile_path,
-                source,
-            }
-        })?;
+        let lockfile =
+            serde_norway::from_str::<SuppressionLockfile>(&contents).map_err(|source| {
+                WatcherError::ParseLockfile {
+                    path: lockfile_path,
+                    source,
+                }
+            })?;
 
         let mut entries = Vec::new();
         for entity in lockfile.entities.values() {

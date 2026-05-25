@@ -16,7 +16,7 @@ use agentmesh_protocol::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
-use serde_yml::{Mapping, Value as YamlValue};
+use serde_norway::{Mapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -149,7 +149,7 @@ pub enum AdapterError {
     ParseFrontmatter {
         /// Source parse error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// Frontmatter must be a mapping when present.
     #[error("frontmatter must be a mapping")]
@@ -159,7 +159,7 @@ pub enum AdapterError {
     SerializeFrontmatter {
         /// Source serialization error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
 }
 
@@ -565,7 +565,7 @@ fn parse_frontmatter_mapping(frontmatter: &str) -> Result<Mapping> {
         return Ok(Mapping::new());
     }
 
-    match serde_yml::from_str::<YamlValue>(frontmatter)
+    match serde_norway::from_str::<YamlValue>(frontmatter)
         .map_err(|source| AdapterError::ParseFrontmatter { source })?
     {
         YamlValue::Mapping(mapping) => Ok(mapping),
@@ -586,7 +586,6 @@ fn ordered_frontmatter(frontmatter: &Mapping) -> Mapping {
     }
 
     let mut remaining = frontmatter
-        .map
         .iter()
         .filter_map(|(key, value)| key.as_str().map(|key| (key.to_string(), value.clone())))
         .filter(|(key, _)| !emitted.contains(key))
@@ -601,7 +600,7 @@ fn ordered_frontmatter(frontmatter: &Mapping) -> Mapping {
 }
 
 fn yaml_fragment(value: &YamlValue) -> Result<String> {
-    let serialized = serde_yml::to_string(value)
+    let serialized = serde_norway::to_string(value)
         .map_err(|source| AdapterError::SerializeFrontmatter { source })?;
     let without_start = serialized.strip_prefix("---\n").unwrap_or(&serialized);
     let without_end = without_start.strip_suffix("...\n").unwrap_or(without_start);

@@ -16,7 +16,7 @@ use agentmesh_protocol::{
     SkippedPath,
 };
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue, json};
-use serde_yml::{Mapping as YamlMapping, Value as YamlValue};
+use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 const SUPPORTED_ENTITIES: &[EntityType] = &[
     EntityType::Instructions,
@@ -716,7 +716,7 @@ fn json_map_to_yaml(
 }
 
 fn json_to_yaml(value: &JsonValue) -> agentmesh_adapter_sdk_rust::Result<YamlValue> {
-    serde_yml::from_str(&value.to_string()).map_err(|source| {
+    serde_norway::from_str(&value.to_string()).map_err(|source| {
         AdapterError::rpc(
             AdapterErrorCode::FormatTranslationFailed,
             format!("failed to convert JSON value to YAML: {source}"),

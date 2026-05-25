@@ -3,6 +3,7 @@ name = "agentmesh-fuzz"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT"
 publish = false
 
 [package.metadata]
@@ -12,11 +13,11 @@ cargo-fuzz = true
 resolver = "3"
 
 [dependencies]
-agentmesh-adapter-sdk-rust = { path = "../crates/agentmesh-adapter-sdk-rust" }
-agentmesh-core = { path = "../crates/agentmesh-core" }
-agentmesh-protocol = { path = "../crates/agentmesh-protocol" }
+agentmesh-adapter-sdk-rust = { path = "../crates/agentmesh-adapter-sdk-rust", version = "0.1.0" }
+agentmesh-core = { path = "../crates/agentmesh-core", version = "0.1.0" }
+agentmesh-protocol = { path = "../crates/agentmesh-protocol", version = "0.1.0" }
 libfuzzer-sys = "0.4"
-serde_yml = "0.0.12"
+serde_norway = "0.9.42"
 
 [[bin]]
 name = "lockfile_parse"

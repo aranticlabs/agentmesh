@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use serde_yml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 use thiserror::Error;
 
 use crate::state::{StateError, write_atomic};
@@ -24,7 +24,7 @@ pub enum MergeError {
     ParseFrontmatter {
         /// Source YAML parse error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// Frontmatter must be a mapping when present.
     #[error("frontmatter must be a mapping")]
@@ -34,7 +34,7 @@ pub enum MergeError {
     SerializeFrontmatter {
         /// Source YAML serialization error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// Conflict preservation failed.
     #[error(transparent)]
@@ -171,7 +171,7 @@ fn parse_frontmatter(frontmatter: &str) -> Result<Mapping> {
         return Ok(Mapping::new());
     }
 
-    match serde_yml::from_str::<Value>(frontmatter)
+    match serde_norway::from_str::<Value>(frontmatter)
         .map_err(|source| MergeError::ParseFrontmatter { source })?
     {
         Value::Mapping(mapping) => Ok(mapping),
@@ -187,7 +187,7 @@ fn compose_markdown(frontmatter: &Mapping, body: &str) -> Result<String> {
 }
 
 fn yaml_fragment(value: &Value) -> Result<String> {
-    let serialized = serde_yml::to_string(value)
+    let serialized = serde_norway::to_string(value)
         .map_err(|source| MergeError::SerializeFrontmatter { source })?;
     let without_start = serialized.strip_prefix("---\n").unwrap_or(&serialized);
     let without_end = without_start.strip_suffix("...\n").unwrap_or(without_start);
@@ -206,7 +206,6 @@ fn ordered_frontmatter(frontmatter: &Mapping) -> Mapping {
     }
 
     let mut remaining = frontmatter
-        .map
         .iter()
         .filter_map(|(key, value)| key.as_str().map(|key| (key.to_string(), value.clone())))
         .filter(|(key, _)| !emitted.contains(key))
@@ -256,7 +255,7 @@ fn merge_frontmatter(
 }
 
 fn collect_keys(mapping: &Mapping, keys: &mut BTreeSet<String>) {
-    for key in mapping.map.keys() {
+    for key in mapping.keys() {
         if let Some(key) = key.as_str() {
             keys.insert(key.to_string());
         }

@@ -37,14 +37,14 @@ pub enum LockfileError {
         path: PathBuf,
         /// Source parse error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// Serializing YAML failed.
     #[error("failed to serialize lockfile")]
     Serialize {
         /// Source serialization error.
         #[source]
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
     /// The lockfile schema is newer than this binary supports.
     #[error("lockfile uses schema v{found}; upgrade required")]
@@ -265,7 +265,7 @@ impl MigrationRegistry {
 /// Parses a lockfile from YAML and checks schema compatibility.
 pub fn parse_lockfile(contents: &str) -> Result<Lockfile> {
     let lockfile =
-        serde_yml::from_str::<Lockfile>(contents).map_err(|source| LockfileError::Parse {
+        serde_norway::from_str::<Lockfile>(contents).map_err(|source| LockfileError::Parse {
             path: PathBuf::from(LOCKFILE_NAME),
             source,
         })?;
@@ -277,7 +277,7 @@ pub fn parse_lockfile(contents: &str) -> Result<Lockfile> {
 pub fn serialize_lockfile(lockfile: &Lockfile) -> Result<String> {
     lockfile.ensure_supported()?;
     let body =
-        serde_yml::to_string(lockfile).map_err(|source| LockfileError::Serialize { source })?;
+        serde_norway::to_string(lockfile).map_err(|source| LockfileError::Serialize { source })?;
     let body = body.strip_prefix("---\n").unwrap_or(&body);
 
     Ok(format!("{LOCKFILE_HEADER}{body}"))
@@ -290,7 +290,7 @@ pub fn read_lockfile(repo_root: &Path) -> Result<Lockfile> {
         path: path.clone(),
         source,
     })?;
-    serde_yml::from_str::<Lockfile>(&contents)
+    serde_norway::from_str::<Lockfile>(&contents)
         .map_err(|source| LockfileError::Parse { path, source })
         .and_then(|lockfile| {
             lockfile.ensure_supported()?;

@@ -1007,7 +1007,7 @@ fn split_lockfile_conflict_sides(contents: &str) -> (String, String) {
 }
 
 fn parse_lockfile_side(path: &Path, contents: &str) -> Result<Lockfile> {
-    let lockfile = match serde_yml::from_str::<Lockfile>(contents) {
+    let lockfile = match serde_norway::from_str::<Lockfile>(contents) {
         Ok(lockfile) => lockfile,
         Err(_source) if !contents.contains("schema:") => return Ok(Lockfile::empty()),
         Err(source) => {
@@ -2241,7 +2241,7 @@ fn canonicalize_codex_toml_subagent(contents: &str, relative_path: &Path) -> Res
         });
     };
 
-    let mut frontmatter = serde_yml::Mapping::new();
+    let mut frontmatter = serde_norway::Mapping::new();
     let mut body = String::new();
     for (key, value) in table {
         if (key == "instructions" || key == "prompt") && body.is_empty() {
@@ -2254,15 +2254,15 @@ fn canonicalize_codex_toml_subagent(contents: &str, relative_path: &Path) -> Res
             continue;
         }
         let yaml_value =
-            serde_yml::to_value(value).map_err(|source| PipelineError::EntityFormat {
+            serde_norway::to_value(value).map_err(|source| PipelineError::EntityFormat {
                 path: relative_path.to_path_buf(),
                 message: source.to_string(),
             })?;
-        frontmatter.insert(serde_yml::Value::String(key.clone()), yaml_value);
+        frontmatter.insert(serde_norway::Value::String(key.clone()), yaml_value);
     }
 
     let rendered =
-        serde_yml::to_string(&serde_yml::Value::Mapping(frontmatter)).map_err(|source| {
+        serde_norway::to_string(&serde_norway::Value::Mapping(frontmatter)).map_err(|source| {
             PipelineError::EntityFormat {
                 path: relative_path.to_path_buf(),
                 message: source.to_string(),
@@ -2273,24 +2273,24 @@ fn canonicalize_codex_toml_subagent(contents: &str, relative_path: &Path) -> Res
     Ok(format!("---\n{rendered}---\n{body}"))
 }
 
-fn split_canonical_markdown(contents: &str) -> Result<(serde_yml::Mapping, String)> {
+fn split_canonical_markdown(contents: &str) -> Result<(serde_norway::Mapping, String)> {
     let Some(rest) = contents.strip_prefix("---\n") else {
-        return Ok((serde_yml::Mapping::new(), contents.to_string()));
+        return Ok((serde_norway::Mapping::new(), contents.to_string()));
     };
     let Some(end) = rest.find("\n---\n") else {
-        return Ok((serde_yml::Mapping::new(), contents.to_string()));
+        return Ok((serde_norway::Mapping::new(), contents.to_string()));
     };
     let frontmatter = &rest[..end];
     let body = rest[end + "\n---\n".len()..].to_string();
-    let value = serde_yml::from_str::<serde_yml::Value>(frontmatter).map_err(|source| {
+    let value = serde_norway::from_str::<serde_norway::Value>(frontmatter).map_err(|source| {
         PipelineError::EntityFormat {
             path: PathBuf::from("<canonical>"),
             message: source.to_string(),
         }
     })?;
     match value {
-        serde_yml::Value::Mapping(mapping) => Ok((mapping, body)),
-        serde_yml::Value::Null => Ok((serde_yml::Mapping::new(), body)),
+        serde_norway::Value::Mapping(mapping) => Ok((mapping, body)),
+        serde_norway::Value::Null => Ok((serde_norway::Mapping::new(), body)),
         _ => Err(PipelineError::EntityFormat {
             path: PathBuf::from("<canonical>"),
             message: "frontmatter must be a mapping".to_string(),
@@ -2816,14 +2816,15 @@ fn emit_file_key(entity_type: EntityType, canonical_path: &Path) -> PathBuf {
 }
 
 fn yaml_frontmatter_to_json_map(
-    frontmatter: serde_yml::Mapping,
+    frontmatter: serde_norway::Mapping,
 ) -> Result<BTreeMap<String, serde_json::Value>> {
-    let value = serde_json::to_value(serde_yml::Value::Mapping(frontmatter)).map_err(|source| {
-        PipelineError::EntityFormat {
-            path: PathBuf::from("<canonical>"),
-            message: source.to_string(),
-        }
-    })?;
+    let value =
+        serde_json::to_value(serde_norway::Value::Mapping(frontmatter)).map_err(|source| {
+            PipelineError::EntityFormat {
+                path: PathBuf::from("<canonical>"),
+                message: source.to_string(),
+            }
+        })?;
     let Some(object) = value.as_object() else {
         return Ok(BTreeMap::new());
     };
@@ -3601,7 +3602,7 @@ mod tests {
 
     #[test]
     fn empty_lockfile_snapshot_is_stable() {
-        let yaml = match serde_yml::to_string(&Lockfile::empty()) {
+        let yaml = match serde_norway::to_string(&Lockfile::empty()) {
             Ok(yaml) => yaml,
             Err(error) => panic!("lockfile should serialize: {error}"),
         };
@@ -4693,11 +4694,11 @@ schema: 1
                 hash("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             ),
         );
-        let left_text = match serde_yml::to_string(&left) {
+        let left_text = match serde_norway::to_string(&left) {
             Ok(contents) => contents,
             Err(error) => panic!("left side should serialize: {error}"),
         };
-        let right_text = match serde_yml::to_string(&right) {
+        let right_text = match serde_norway::to_string(&right) {
             Ok(contents) => contents,
             Err(error) => panic!("right side should serialize: {error}"),
         };
