@@ -3,19 +3,20 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentmesh_protocol::{
-    AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityType, ImportRequest,
-    ImportResponse, InitializeRequest, InitializeResponse, InstallHooksRequest,
-    InstallHooksResponse, JSONRPC_VERSION, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-    LogLevel, LogParams, OkResponse, PROTOCOL_VERSION, PartialFidelity, ProgressParams,
-    ProtocolError, RemoveHooksRequest, RemoveHooksResponse, RequestId, RpcError, SkippedEntity,
-    standard_error_codes, write_json_frame,
+    AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityFile, EntityType,
+    ImportFilter, ImportRequest, ImportResponse, InitializeRequest, InitializeResponse,
+    InstallHooksRequest, InstallHooksResponse, JSONRPC_VERSION, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, LogLevel, LogParams, OkResponse, PROTOCOL_VERSION,
+    PartialFidelity, ProgressParams, ProtocolError, RemoveHooksRequest, RemoveHooksResponse,
+    RequestId, RpcError, SkippedEntity, standard_error_codes, write_json_frame,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_norway::{Mapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
@@ -700,6 +701,363 @@ pub fn partial_fidelity(
         lost_fields,
         reason: reason.into(),
     }
+}
+
+/// Slugifies a string by lowercasing and replacing non-alphanumeric characters with hyphens.
+#[must_use]
+pub fn slugify(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_was_separator = false;
+    for character in value.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_lowercase() || character.is_ascii_digit() {
+            output.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator && !output.is_empty() {
+            output.push('-');
+            last_was_separator = true;
+        }
+    }
+    while output.ends_with('-') {
+        output.pop();
+    }
+    if output.is_empty() {
+        "unnamed".to_string()
+    } else {
+        output
+    }
+}
+
+/// Extracts a slug from entity ID or frontmatter name field.
+#[must_use]
+pub fn slug_for_entity(id: &str, frontmatter: &BTreeMap<String, JsonValue>) -> String {
+    frontmatter
+        .get("name")
+        .and_then(JsonValue::as_str)
+        .map(slugify)
+        .unwrap_or_else(|| {
+            id.split_once(':')
+                .map(|(_, slug)| slugify(slug))
+                .unwrap_or_else(|| "unnamed".to_string())
+        })
+}
+
+/// Checks if any candidate path matches the import filter's changed paths.
+#[must_use]
+pub fn selected(filter: Option<&ImportFilter>, candidates: &[PathBuf]) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    if filter.changed_paths.is_empty() {
+        return true;
+    }
+    filter.changed_paths.iter().any(|changed| {
+        candidates
+            .iter()
+            .any(|candidate| changed == candidate || changed.starts_with(candidate))
+    })
+}
+
+/// Computes a stable hash of entity files with normalized path separators.
+#[must_use]
+pub fn hash_files(files: &BTreeMap<PathBuf, EntityFile>) -> String {
+    let mut bytes = Vec::new();
+    for (path, file) in files {
+        let path_string = path.to_string_lossy().replace('\\', "/");
+        bytes.extend_from_slice(path_string.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(file.encoding.as_str().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(file.content.as_bytes());
+        bytes.push(0);
+    }
+    sha256_bytes(&bytes)
+}
+
+/// Reads a directory and returns sorted entries.
+pub fn read_dir_sorted(path: &Path) -> Result<Vec<fs::DirEntry>> {
+    let mut entries = fs::read_dir(path)
+        .map_err(|source| AdapterError::Io {
+            action: "read directory",
+            path: path.to_path_buf(),
+            source,
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|source| AdapterError::Io {
+            action: "read directory entry",
+            path: path.to_path_buf(),
+            source,
+        })?;
+    entries.sort_by_key(|entry| entry.path());
+    Ok(entries)
+}
+
+/// Reads a file to a UTF-8 string.
+pub fn read_to_string(path: &Path) -> Result<String> {
+    fs::read_to_string(path).map_err(|source| AdapterError::Io {
+        action: "read file",
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Extracts the workspace root from a runtime directory path.
+pub fn workspace_root_for(runtime_dir: &Path) -> Result<PathBuf> {
+    runtime_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
+        AdapterError::rpc(
+            AdapterErrorCode::WorkspaceOutsideBound,
+            "runtime_dir must have a workspace parent",
+        )
+    })
+}
+
+/// Makes a path relative to the workspace root.
+pub fn workspace_relative(workspace_root: &Path, path: &Path) -> Result<PathBuf> {
+    path.strip_prefix(workspace_root)
+        .map(Path::to_path_buf)
+        .map_err(|_| {
+            AdapterError::rpc(
+                AdapterErrorCode::WorkspaceOutsideBound,
+                format!("{} is outside {}", path.display(), workspace_root.display()),
+            )
+        })
+}
+
+/// Checks if a path is safe (relative and contains only normal components).
+#[must_use]
+pub fn is_safe_relative(path: &Path) -> bool {
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// Returns the maximum modification time of a file or directory tree.
+pub fn max_mtime_string(path: &Path) -> Result<String> {
+    if path.is_file() {
+        return mtime_string(path);
+    }
+    let mut newest = UNIX_EPOCH;
+    for entry in read_dir_sorted(path)? {
+        let entry_path = entry.path();
+        let modified = if entry_path.is_dir() {
+            system_time_from_string(&max_mtime_string(&entry_path)?)
+        } else {
+            fs::metadata(&entry_path)
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(UNIX_EPOCH)
+        };
+        if modified > newest {
+            newest = modified;
+        }
+    }
+    Ok(format_system_time(newest))
+}
+
+/// Returns the modification time of a file as a formatted string.
+pub fn mtime_string(path: &Path) -> Result<String> {
+    let modified = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|source| AdapterError::Io {
+            action: "read metadata",
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(format_system_time(modified))
+}
+
+/// Formats a SystemTime as a unix timestamp string.
+#[must_use]
+pub fn format_system_time(time: SystemTime) -> String {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => format!(
+            "unix:{}.{:09}Z",
+            duration.as_secs(),
+            duration.subsec_nanos()
+        ),
+        Err(_) => "unix:0.000000000Z".to_string(),
+    }
+}
+
+/// Parses a unix timestamp string to a SystemTime.
+#[must_use]
+pub fn system_time_from_string(value: &str) -> SystemTime {
+    let Some(rest) = value.strip_prefix("unix:") else {
+        return UNIX_EPOCH;
+    };
+    let Some((seconds, nanos)) = rest
+        .strip_suffix('Z')
+        .and_then(|value| value.split_once('.'))
+    else {
+        return UNIX_EPOCH;
+    };
+    let Ok(seconds) = seconds.parse::<u64>() else {
+        return UNIX_EPOCH;
+    };
+    let Ok(nanos) = nanos.parse::<u32>() else {
+        return UNIX_EPOCH;
+    };
+    UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
+}
+
+/// Reads a JSON file or returns an empty object if it doesn't exist.
+pub fn read_json_object(path: &Path) -> Result<JsonValue> {
+    if !path.exists() {
+        return Ok(JsonValue::Object(JsonMap::new()));
+    }
+    let content = read_to_string(path)?;
+    let value = serde_json::from_str::<JsonValue>(&content).map_err(|source| {
+        AdapterError::rpc(
+            AdapterErrorCode::HookInstallFailed,
+            format!("failed to parse hook overlay JSON: {source}"),
+        )
+    })?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(AdapterError::rpc(
+            AdapterErrorCode::HookInstallFailed,
+            "hook overlay root must be a JSON object",
+        ))
+    }
+}
+
+/// Writes a JSON value to a file with pretty formatting and trailing newline.
+pub fn write_json_pretty(path: &Path, value: &JsonValue) -> Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|source| {
+        AdapterError::rpc(
+            AdapterErrorCode::HookInstallFailed,
+            format!("failed to serialize hook JSON: {source}"),
+        )
+    })?;
+    bytes.push(b'\n');
+    write_atomic(path, &bytes)
+}
+
+/// Ensures a JSON hook array exists at the specified path, creating intermediate objects as needed.
+pub fn ensure_hook_array<'a>(
+    value: &'a mut JsonValue,
+    path: &[&str],
+) -> Result<&'a mut Vec<JsonValue>> {
+    let mut current = value;
+    for key in &path[..path.len() - 1] {
+        let Some(object) = current.as_object_mut() else {
+            return Err(AdapterError::rpc(
+                AdapterErrorCode::HookInstallFailed,
+                "hook overlay path must contain JSON objects",
+            ));
+        };
+        current = object
+            .entry((*key).to_string())
+            .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+    }
+
+    let final_key = path[path.len() - 1];
+    let Some(object) = current.as_object_mut() else {
+        return Err(AdapterError::rpc(
+            AdapterErrorCode::HookInstallFailed,
+            "hook overlay path must contain JSON objects",
+        ));
+    };
+    let entry = object
+        .entry(final_key.to_string())
+        .or_insert_with(|| JsonValue::Array(Vec::new()));
+    entry.as_array_mut().ok_or_else(|| {
+        AdapterError::rpc(
+            AdapterErrorCode::HookInstallFailed,
+            format!("hook overlay field `{final_key}` must be an array"),
+        )
+    })
+}
+
+/// Finds a mutable JSON hook array at the specified path.
+pub fn find_hook_array_mut<'a>(
+    value: &'a mut JsonValue,
+    path: &[&str],
+) -> Option<&'a mut Vec<JsonValue>> {
+    let mut current = value;
+    for key in &path[..path.len() - 1] {
+        current = current.as_object_mut()?.get_mut(*key)?;
+    }
+    current
+        .as_object_mut()?
+        .get_mut(path[path.len() - 1])?
+        .as_array_mut()
+}
+
+/// Finds the index of a hook group containing the specified command.
+#[must_use]
+pub fn find_hook_group(entries: &[JsonValue], command: &str) -> Option<usize> {
+    entries
+        .iter()
+        .position(|entry| group_contains_command(entry, command))
+}
+
+/// Checks if a hook group contains the specified command.
+fn group_contains_command(entry: &JsonValue, command: &str) -> bool {
+    entry
+        .get("hooks")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .any(|hook| hook.get("command").and_then(JsonValue::as_str) == Some(command))
+}
+
+/// Removes hook entries by their recorded entry paths.
+pub fn remove_recorded_entries(
+    entries: &mut Vec<JsonValue>,
+    entry_paths: &[String],
+    prefix: &str,
+    trigger: &str,
+) -> u32 {
+    let mut indices = entry_paths
+        .iter()
+        .filter_map(|entry_path| parse_entry_index(entry_path, prefix))
+        .filter(|index| {
+            entries
+                .get(*index)
+                .is_some_and(|entry| group_has_trigger(entry, trigger))
+        })
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices.dedup();
+
+    let removed = indices.len() as u32;
+    for index in indices.into_iter().rev() {
+        entries.remove(index);
+    }
+    removed
+}
+
+/// Removes all hook entries matching the specified trigger.
+pub fn remove_matching_entries(entries: &mut Vec<JsonValue>, trigger: &str) -> u32 {
+    let original_len = entries.len();
+    entries.retain(|entry| !group_has_trigger(entry, trigger));
+    (original_len - entries.len()) as u32
+}
+
+/// Checks if a hook group contains a trigger string in its command.
+#[must_use]
+pub fn group_has_trigger(entry: &JsonValue, trigger: &str) -> bool {
+    entry
+        .get("hooks")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .any(|hook| {
+            hook.get("command")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|command| command.contains("agentmesh") && command.contains(trigger))
+        })
+}
+
+/// Parses an entry index from a JSONPath-style entry path.
+fn parse_entry_index(entry_path: &str, prefix: &str) -> Option<usize> {
+    entry_path
+        .strip_prefix(prefix)?
+        .strip_prefix('[')?
+        .strip_suffix(']')?
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]

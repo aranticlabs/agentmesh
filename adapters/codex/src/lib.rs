@@ -2,12 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
 
 use agentmesh_adapter_sdk_rust::{
-    Adapter, AdapterError, AdapterMetadata, FormatTranslation, FrontmatterDocument,
-    compose_frontmatter, parse_frontmatter, sha256_bytes, skipped_entity, write_atomic,
+    compose_frontmatter, ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files,
+    is_safe_relative, max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted,
+    read_json_object, read_to_string, remove_matching_entries, remove_recorded_entries, selected,
+    sha256_bytes, skipped_entity, slug_for_entity, slugify, workspace_relative,
+    workspace_root_for, write_atomic, write_json_pretty, Adapter, AdapterError, AdapterMetadata,
+    FormatTranslation, FrontmatterDocument,
 };
 use agentmesh_protocol::{
     AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityFile, EntityFileEncoding,
@@ -15,7 +18,7 @@ use agentmesh_protocol::{
     InstallHooksResponse, InstalledHook, RemoveHooksRequest, RemoveHooksResponse, RuntimeMode,
     SkippedPath,
 };
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue, json};
+use serde_json::{Number as JsonNumber, Value as JsonValue, json};
 use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 const SUPPORTED_ENTITIES: &[EntityType] = &[
@@ -779,91 +782,6 @@ fn skill_runtime_file(path: &Path, slug: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
-fn slug_for_entity(id: &str, frontmatter: &BTreeMap<String, JsonValue>) -> String {
-    frontmatter
-        .get("name")
-        .and_then(JsonValue::as_str)
-        .map(slugify)
-        .unwrap_or_else(|| {
-            id.split_once(':')
-                .map(|(_, slug)| slugify(slug))
-                .unwrap_or_else(|| "unnamed".to_string())
-        })
-}
-
-fn slugify(value: &str) -> String {
-    let mut output = String::new();
-    let mut last_was_separator = false;
-    for character in value.chars().flat_map(char::to_lowercase) {
-        if character.is_ascii_lowercase() || character.is_ascii_digit() {
-            output.push(character);
-            last_was_separator = false;
-        } else if !last_was_separator && !output.is_empty() {
-            output.push('-');
-            last_was_separator = true;
-        }
-    }
-    while output.ends_with('-') {
-        output.pop();
-    }
-    if output.is_empty() {
-        "unnamed".to_string()
-    } else {
-        output
-    }
-}
-
-fn hash_files(files: &BTreeMap<PathBuf, EntityFile>) -> String {
-    let mut bytes = Vec::new();
-    for (path, file) in files {
-        bytes.extend_from_slice(path.as_os_str().as_encoded_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(file.encoding.as_str().as_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(file.content.as_bytes());
-        bytes.push(0);
-    }
-    sha256_bytes(&bytes)
-}
-
-fn selected(filter: Option<&ImportFilter>, candidates: &[PathBuf]) -> bool {
-    let Some(filter) = filter else {
-        return true;
-    };
-    if filter.changed_paths.is_empty() {
-        return true;
-    }
-    filter.changed_paths.iter().any(|changed| {
-        candidates
-            .iter()
-            .any(|candidate| changed == candidate || changed.starts_with(candidate))
-    })
-}
-
-fn read_dir_sorted(path: &Path) -> agentmesh_adapter_sdk_rust::Result<Vec<fs::DirEntry>> {
-    let mut entries = fs::read_dir(path)
-        .map_err(|source| AdapterError::Io {
-            action: "read directory",
-            path: path.to_path_buf(),
-            source,
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|source| AdapterError::Io {
-            action: "read directory entry",
-            path: path.to_path_buf(),
-            source,
-        })?;
-    entries.sort_by_key(|entry| entry.path());
-    Ok(entries)
-}
-
-fn read_to_string(path: &Path) -> agentmesh_adapter_sdk_rust::Result<String> {
-    fs::read_to_string(path).map_err(|source| AdapterError::Io {
-        action: "read file",
-        path: path.to_path_buf(),
-        source,
-    })
-}
 
 fn read_entity_file(path: &Path) -> agentmesh_adapter_sdk_rust::Result<EntityFile> {
     fs::read(path)
@@ -903,154 +821,6 @@ fn entity_file_bytes(
     })
 }
 
-fn write_json_pretty(path: &Path, value: &JsonValue) -> agentmesh_adapter_sdk_rust::Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(|source| {
-        AdapterError::rpc(
-            AdapterErrorCode::HookInstallFailed,
-            format!("failed to serialize hook JSON: {source}"),
-        )
-    })?;
-    bytes.push(b'\n');
-    write_atomic(path, &bytes)
-}
-
-fn read_json_object(path: &Path) -> agentmesh_adapter_sdk_rust::Result<JsonValue> {
-    if !path.exists() {
-        return Ok(JsonValue::Object(JsonMap::new()));
-    }
-    let content = read_to_string(path)?;
-    let value = serde_json::from_str::<JsonValue>(&content).map_err(|source| {
-        AdapterError::rpc(
-            AdapterErrorCode::HookInstallFailed,
-            format!("failed to parse hook overlay JSON: {source}"),
-        )
-    })?;
-    if value.is_object() {
-        Ok(value)
-    } else {
-        Err(AdapterError::rpc(
-            AdapterErrorCode::HookInstallFailed,
-            "hook overlay root must be a JSON object",
-        ))
-    }
-}
-
-fn ensure_hook_array<'a>(
-    value: &'a mut JsonValue,
-    path: &[&str],
-) -> agentmesh_adapter_sdk_rust::Result<&'a mut Vec<JsonValue>> {
-    let mut current = value;
-    for key in &path[..path.len() - 1] {
-        let Some(object) = current.as_object_mut() else {
-            return Err(AdapterError::rpc(
-                AdapterErrorCode::HookInstallFailed,
-                "hook overlay path must contain JSON objects",
-            ));
-        };
-        current = object
-            .entry((*key).to_string())
-            .or_insert_with(|| JsonValue::Object(JsonMap::new()));
-    }
-
-    let final_key = path[path.len() - 1];
-    let Some(object) = current.as_object_mut() else {
-        return Err(AdapterError::rpc(
-            AdapterErrorCode::HookInstallFailed,
-            "hook overlay path must contain JSON objects",
-        ));
-    };
-    let entry = object
-        .entry(final_key.to_string())
-        .or_insert_with(|| JsonValue::Array(Vec::new()));
-    entry.as_array_mut().ok_or_else(|| {
-        AdapterError::rpc(
-            AdapterErrorCode::HookInstallFailed,
-            format!("hook overlay field `{final_key}` must be an array"),
-        )
-    })
-}
-
-fn find_hook_array_mut<'a>(
-    value: &'a mut JsonValue,
-    path: &[&str],
-) -> Option<&'a mut Vec<JsonValue>> {
-    let mut current = value;
-    for key in &path[..path.len() - 1] {
-        current = current.as_object_mut()?.get_mut(*key)?;
-    }
-    current
-        .as_object_mut()?
-        .get_mut(path[path.len() - 1])?
-        .as_array_mut()
-}
-
-fn find_hook_group(entries: &[JsonValue], command: &str) -> Option<usize> {
-    entries
-        .iter()
-        .position(|entry| group_contains_command(entry, command))
-}
-
-fn group_contains_command(entry: &JsonValue, command: &str) -> bool {
-    entry
-        .get("hooks")
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .any(|hook| hook.get("command").and_then(JsonValue::as_str) == Some(command))
-}
-
-fn remove_recorded_entries(
-    entries: &mut Vec<JsonValue>,
-    entry_paths: &[String],
-    prefix: &str,
-    trigger: &str,
-) -> u32 {
-    let mut indices = entry_paths
-        .iter()
-        .filter_map(|entry_path| parse_entry_index(entry_path, prefix))
-        .filter(|index| {
-            entries
-                .get(*index)
-                .is_some_and(|entry| group_has_trigger(entry, trigger))
-        })
-        .collect::<Vec<_>>();
-    indices.sort_unstable();
-    indices.dedup();
-
-    let removed = indices.len() as u32;
-    for index in indices.into_iter().rev() {
-        entries.remove(index);
-    }
-    removed
-}
-
-fn remove_matching_entries(entries: &mut Vec<JsonValue>, trigger: &str) -> u32 {
-    let original_len = entries.len();
-    entries.retain(|entry| !group_has_trigger(entry, trigger));
-    (original_len - entries.len()) as u32
-}
-
-fn group_has_trigger(entry: &JsonValue, trigger: &str) -> bool {
-    entry
-        .get("hooks")
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .any(|hook| {
-            hook.get("command")
-                .and_then(JsonValue::as_str)
-                .is_some_and(|command| command.contains("agentmesh") && command.contains(trigger))
-        })
-}
-
-fn parse_entry_index(entry_path: &str, prefix: &str) -> Option<usize> {
-    entry_path
-        .strip_prefix(prefix)?
-        .strip_prefix('[')?
-        .strip_suffix(']')?
-        .parse()
-        .ok()
-}
 
 fn codex_matcher(extra: Option<&str>) -> String {
     let mut tools = vec!["Edit", "Write", "MultiEdit"];
@@ -1069,97 +839,6 @@ fn codex_hooks_are_empty(value: &JsonValue) -> bool {
         .all(|(key, value)| key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty))
 }
 
-fn workspace_root_for(runtime_dir: &Path) -> agentmesh_adapter_sdk_rust::Result<PathBuf> {
-    runtime_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
-        AdapterError::rpc(
-            AdapterErrorCode::WorkspaceOutsideBound,
-            "runtime_dir must have a workspace parent",
-        )
-    })
-}
-
-fn workspace_relative(
-    workspace_root: &Path,
-    path: &Path,
-) -> agentmesh_adapter_sdk_rust::Result<PathBuf> {
-    path.strip_prefix(workspace_root)
-        .map(Path::to_path_buf)
-        .map_err(|_| {
-            AdapterError::rpc(
-                AdapterErrorCode::WorkspaceOutsideBound,
-                format!("{} is outside {}", path.display(), workspace_root.display()),
-            )
-        })
-}
-
-fn is_safe_relative(path: &Path) -> bool {
-    !path.is_absolute()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-}
-
-fn max_mtime_string(path: &Path) -> agentmesh_adapter_sdk_rust::Result<String> {
-    if path.is_file() {
-        return mtime_string(path);
-    }
-    let mut newest = UNIX_EPOCH;
-    for entry in read_dir_sorted(path)? {
-        let entry_path = entry.path();
-        let modified = if entry_path.is_dir() {
-            system_time_from_string(&max_mtime_string(&entry_path)?)
-        } else {
-            fs::metadata(&entry_path)
-                .and_then(|metadata| metadata.modified())
-                .unwrap_or(UNIX_EPOCH)
-        };
-        if modified > newest {
-            newest = modified;
-        }
-    }
-    Ok(format_system_time(newest))
-}
-
-fn mtime_string(path: &Path) -> agentmesh_adapter_sdk_rust::Result<String> {
-    let modified = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|source| AdapterError::Io {
-            action: "read metadata",
-            path: path.to_path_buf(),
-            source,
-        })?;
-    Ok(format_system_time(modified))
-}
-
-fn format_system_time(time: SystemTime) -> String {
-    match time.duration_since(UNIX_EPOCH) {
-        Ok(duration) => format!(
-            "unix:{}.{:09}Z",
-            duration.as_secs(),
-            duration.subsec_nanos()
-        ),
-        Err(_) => "unix:0.000000000Z".to_string(),
-    }
-}
-
-fn system_time_from_string(value: &str) -> SystemTime {
-    let Some(rest) = value.strip_prefix("unix:") else {
-        return UNIX_EPOCH;
-    };
-    let Some((seconds, nanos)) = rest
-        .strip_suffix('Z')
-        .and_then(|value| value.split_once('.'))
-    else {
-        return UNIX_EPOCH;
-    };
-    let Ok(seconds) = seconds.parse::<u64>() else {
-        return UNIX_EPOCH;
-    };
-    let Ok(nanos) = nanos.parse::<u32>() else {
-        return UNIX_EPOCH;
-    };
-    UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1655,10 +1334,10 @@ severity = ["high", "medium"]
 
     fn write_bytes(path: impl AsRef<Path>, content: &[u8]) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent()
-            && let Err(error) = fs::create_dir_all(parent)
-        {
-            panic!("parent directory should be created: {error}");
+        if let Some(parent) = path.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                panic!("parent directory should be created: {error}");
+            }
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");
