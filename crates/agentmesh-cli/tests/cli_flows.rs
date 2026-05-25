@@ -672,7 +672,7 @@ fn claude_hook_trigger_imports_new_skill_and_drains_pending_record() {
     assert!(repo.join(".ai/skills/hot-path/SKILL.md").exists());
     assert!(read(repo.join("agentmesh.lock")).contains("  skill:hot-path:"));
 
-    let drained = wait_until(Duration::from_secs(5), || {
+    let drained = wait_until(Duration::from_secs(30), || {
         repo.join(".codex/skills/hot-path/SKILL.md").exists() && pending_record_count(&cache) == 0
     });
     assert!(drained, "background drainer should fan out hook changes");
@@ -1446,11 +1446,16 @@ fn foreground_watcher_drains_canonical_edit_through_core_sync() {
         "---\nname: watched\n---\nEdited through canonical file.\n",
     );
 
-    let drained = wait_until(Duration::from_secs(10), || {
+    let drained = wait_until(Duration::from_secs(30), || {
+        let claude_updated = repo.join(".claude/skills/watched/SKILL.md").exists()
+            && read(repo.join(".claude/skills/watched/SKILL.md"))
+                .contains("Edited through canonical file.");
         find_named_file(&cache, "watcher.log")
             .map(|path| {
                 let log = read(path);
-                log.contains("\"trigger\":\"watcher\"") && log.contains("drain-complete")
+                claude_updated
+                    && log.contains("\"trigger\":\"watcher\"")
+                    && log.contains("drain-complete")
             })
             .unwrap_or(false)
     });

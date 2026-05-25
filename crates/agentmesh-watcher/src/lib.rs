@@ -1865,9 +1865,13 @@ entities:
         let cache = temp.path().join("cache");
         let layout = layout(&repo, &cache);
         let service_name = service_name(&layout);
+        let binary_path = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => panic!("current test executable path should resolve: {error}"),
+        };
         let definition = match service_definition_contents(
             &repo,
-            Path::new("/usr/local/bin/agentmesh"),
+            &binary_path,
             &service_name,
             &WatchOptions::default(),
         ) {

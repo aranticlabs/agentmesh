@@ -629,6 +629,13 @@ mod tests {
         BTreeMap<String, serde_json::Value>,
     );
 
+    fn absolute_agentmesh_binary_path() -> PathBuf {
+        match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => panic!("current test executable path should resolve: {error}"),
+        }
+    }
+
     fn file(content: &str) -> EntityFile {
         EntityFile {
             content: content.to_string(),
@@ -763,7 +770,7 @@ mod tests {
         let adapter = ClaudeAdapter;
         let installed = match adapter.install_hooks(InstallHooksRequest {
             runtime_dir: root.join(".claude"),
-            agentmesh_binary_path: PathBuf::from("/usr/local/bin/agentmesh"),
+            agentmesh_binary_path: absolute_agentmesh_binary_path(),
             matcher_extra: Some("Bash".to_string()),
         }) {
             Ok(installed) => installed,
@@ -840,7 +847,7 @@ mod tests {
         let adapter = ClaudeAdapter;
         let request = InstallHooksRequest {
             runtime_dir: root.join(".claude"),
-            agentmesh_binary_path: PathBuf::from("/usr/local/bin/agentmesh"),
+            agentmesh_binary_path: absolute_agentmesh_binary_path(),
             matcher_extra: None,
         };
 
