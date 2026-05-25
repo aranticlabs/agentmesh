@@ -302,6 +302,38 @@ verify_manifest_signature() {
     "$manifest" >/dev/null
 }
 
+print_success_banner() {
+  binary_path="$1"
+  tag="$2"
+  cat <<EOF
+
+ █████╗  ██████╗ ███████╗███╗   ██╗████████╗███╗   ███╗███████╗███████╗██╗  ██╗
+██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝████╗ ████║██╔════╝██╔════╝██║  ██║
+███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ██╔████╔██║█████╗  ███████╗███████║
+██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║
+██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ██║ ╚═╝ ██║███████╗███████║██║  ██║
+╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+                                                            By Arantic Digital
+
+AgentMesh is installed and ready.
+
+Installed:
+  Binary:  $binary_path
+  Channel: $channel ($tag)
+
+Next steps in a repository:
+  1. agentmesh scan
+     See which runtimes and instruction files AgentMesh detects.
+  2. agentmesh init
+     Set up project sync, lockfile state, and runtime hooks.
+  3. agentmesh status
+     Confirm the mesh is healthy before committing changes.
+
+Docs: https://agentmesh.sh/docs/
+
+EOF
+}
+
 install_dir_default() {
   if [ -n "${HOME:-}" ]; then
     printf '%s\n' "$HOME/.local/bin"
@@ -374,7 +406,7 @@ install_archive() {
   mkdir -p "$install_dir"
   chmod +x "$binary"
   cp "$binary" "$install_dir/$binary_name"
-  echo "Installed agentmesh to $install_dir/$binary_name"
+  print_success_banner "$install_dir/$binary_name" "$tag"
   case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *)
