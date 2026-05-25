@@ -1547,6 +1547,7 @@ fn path_bytes(path: &OsStr) -> Vec<u8> {
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
     use std::time::Duration;
 
     use notify::{Event, EventKind};
@@ -1803,7 +1804,7 @@ entities:
         let cache = temp.path().join("cache");
         let layout = layout(&repo, &cache);
         let record = WatcherRecord::new(
-            u32::MAX,
+            stale_pid(),
             &repo,
             &WatchOptions::default(),
             false,
@@ -1822,6 +1823,38 @@ entities:
         assert!(!status.running);
         assert!(status.pid.is_none());
         assert!(!layout.state_file.exists());
+    }
+
+    #[cfg(unix)]
+    fn stale_pid() -> u32 {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()
+            .unwrap_or_else(|error| panic!("stale pid child should spawn: {error}"));
+        let pid = child.id();
+        child
+            .wait()
+            .unwrap_or_else(|error| panic!("stale pid child should exit: {error}"));
+        pid
+    }
+
+    #[cfg(windows)]
+    fn stale_pid() -> u32 {
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap_or_else(|error| panic!("stale pid child should spawn: {error}"));
+        let pid = child.id();
+        child
+            .wait()
+            .unwrap_or_else(|error| panic!("stale pid child should exit: {error}"));
+        pid
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn stale_pid() -> u32 {
+        u32::MAX
     }
 
     #[test]
