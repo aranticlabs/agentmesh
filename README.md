@@ -22,8 +22,8 @@ curl -fsSL https://agentmesh.sh/install.sh | sh
 irm https://agentmesh.sh/install.ps1 | iex
 ```
 
-The npm package and upgrade/uninstall options are documented at
-[agentmesh.sh/installation/curl](https://agentmesh.sh/installation/curl).
+Upgrade and uninstall options are documented at
+[agentmesh.sh/docs/installation/curl](https://agentmesh.sh/docs/installation/curl).
 
 For local development, build from source:
 
@@ -113,13 +113,12 @@ agentmesh uninstall --dry-run
 
 **Remove the binary** after uninstalling from each project:
 
-| Install method      | Command                                            |
-| ------------------- | -------------------------------------------------- |
-| curl / `install.sh` | `rm ~/.local/bin/agentmesh` (or your install path) |
-| npm                 | `npm uninstall -g @aranticlabs/agentmesh`          |
-| Windows             | Remove `agentmesh.exe` from your install directory |
+| Install method             | Command                                            |
+| -------------------------- | -------------------------------------------------- |
+| curl / `install.sh`        | `rm ~/.local/bin/agentmesh` (or your install path) |
+| PowerShell / `install.ps1` | Remove `agentmesh.exe` from your install directory |
 
-More detail: [agentmesh.sh/installation/curl](https://agentmesh.sh/installation/curl).
+More detail: [agentmesh.sh/docs/installation/curl](https://agentmesh.sh/docs/installation/curl).
 
 ## Development
 

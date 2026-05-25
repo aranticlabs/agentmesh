@@ -132,15 +132,3 @@ jobs:
             dist/SHA256SUMS
             dist/SHA256SUMS.sig
             dist/SHA256SUMS.bundle
-
-  npm-publish-ready:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: https://registry.npmjs.org
-      - run: npm pack ./installers/npm --dry-run

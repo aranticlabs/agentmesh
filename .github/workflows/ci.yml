@@ -146,9 +146,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p agentmesh
@@ -176,16 +173,11 @@ jobs:
 
           shell_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/install.sh --print-platform)"
           test "$shell_musl" = "x86_64-unknown-linux-musl"
-          npm_musl="$(PATH="$tmp/bin:/usr/bin:/bin" sh installers/npm/bin/agentmesh --print-platform)"
-          test "$npm_musl" = "x86_64-unknown-linux-musl"
 
           if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/install.sh --print-platform >/dev/null 2>&1; then
             exit 1
           fi
-          if PATH="$tmp/bin:/usr/bin:/bin" AGENTMESH_TEST_UNAME_M=aarch64 sh installers/npm/bin/agentmesh --print-platform >/dev/null 2>&1; then
-            exit 1
-          fi
-      - name: Verify direct and npm installer flows
+      - name: Verify direct installer flows
         run: |
           sha256_file() {
             if command -v sha256sum >/dev/null 2>&1; then
@@ -199,10 +191,6 @@ jobs:
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
           case "$stable" in *agentmesh-v0.1.0*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
-          npm_stable="$(AGENTMESH_CHANNEL=stable sh installers/npm/bin/agentmesh --print-url)"
-          npm_nightly="$(AGENTMESH_CHANNEL=nightly sh installers/npm/bin/agentmesh --print-url)"
-          case "$npm_stable" in *agentmesh-v0.1.0*) ;; *) exit 1 ;; esac
-          case "$npm_nightly" in */nightly/*) ;; *) exit 1 ;; esac
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
@@ -266,11 +254,6 @@ jobs:
           test -f "$e2e_repo/.ai/skills/demo/SKILL.md"
           "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall --yes --purge --silent
           test ! -e "$e2e_repo/agentmesh.lock"
-
-          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-stable" AGENTMESH_CHANNEL=stable AGENTMESH_NPM_BINARY_DIR="$tmp/npm-stable" sh installers/npm/bin/agentmesh --install
-          "$tmp/npm-stable/agentmesh" --version
-          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-npm-nightly" AGENTMESH_CHANNEL=nightly AGENTMESH_NPM_BINARY_DIR="$tmp/npm-nightly" sh installers/npm/bin/agentmesh --install
-          "$tmp/npm-nightly/agentmesh" --version
       - name: Verify installer signature paths
         run: |
           tmp="$(mktemp -d)"
@@ -299,13 +282,7 @@ jobs:
           : >"$tmp/SHA256SUMS.bundle"
 
           PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
-          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="$cosign_sha" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"
           if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-install" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/install.sh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
             echo "install.sh accepted a mismatched cosign checksum" >&2
             exit 1
           fi
-          if PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cache-bad-npm" AGENTMESH_COSIGN_BASE_URL="file://$tmp/base" AGENTMESH_COSIGN_SHA256="0000" sh installers/npm/bin/agentmesh --verify-sha256sums-signature "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sig" "$tmp/SHA256SUMS.bundle"; then
-            echo "npm wrapper accepted a mismatched cosign checksum" >&2
-            exit 1
-          fi
-      - run: npm pack ./installers/npm --dry-run

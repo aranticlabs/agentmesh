@@ -6,7 +6,6 @@ This directory holds packaging wrappers around the single AgentMesh binary.
 | ------------- | ---------------------------------------------- |
 | `install.sh`  | macOS and Linux installer                      |
 | `install.ps1` | Windows installer                              |
-| `npm/`        | npm wrapper package (`@aranticlabs/agentmesh`) |
 
 Release installers resolve the current platform archive, verify it against the published
 `SHA256SUMS` manifest, verify the manifest signature and Sigstore bundle with cosign, and install
@@ -44,16 +43,6 @@ From a clone of this repository:
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1
 ```
 
-### npm
-
-The npm wrapper is not published yet. When available:
-
-```bash
-npm install -g @aranticlabs/agentmesh
-```
-
-See `npm/README.md` for package layout.
-
 ### Build from source
 
 For contributors and local development only:
@@ -76,13 +65,6 @@ irm https://agentmesh.sh/install.ps1 | iex        # Windows
 agentmesh upgrade
 ```
 
-When the npm package is available:
-
-```bash
-npm update -g @aranticlabs/agentmesh
-agentmesh upgrade
-```
-
 ## Uninstall
 
 From each initialized repository:
@@ -97,7 +79,6 @@ Then remove the binary:
 | -------------------------- | -------------------------------------------------- |
 | curl / `install.sh`        | `rm ~/.local/bin/agentmesh` (or your install path) |
 | PowerShell / `install.ps1` | Remove `agentmesh.exe` from your install directory |
-| npm                        | `npm uninstall -g @aranticlabs/agentmesh`          |
 
 ## Developer checks
 
@@ -106,8 +87,6 @@ Smoke checks run without network access:
 ```bash
 sh installers/install.sh --smoke
 sh installers/install.sh --upgrade-help
-sh installers/npm/bin/agentmesh --smoke
-sh installers/npm/bin/agentmesh --upgrade-help
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
 ```
