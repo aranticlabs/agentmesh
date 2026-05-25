@@ -26,7 +26,7 @@ clippy:
 	@cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 test:
-	@cargo test --workspace --all-features
+	@cargo test --workspace --all-features -- --test-threads=1
 
 build:
 	@cargo build --locked --release -p agentmesh-cli
