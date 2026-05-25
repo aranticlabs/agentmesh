@@ -5,7 +5,6 @@ on:
   push:
     tags:
       - "v*"
-      - "agentmesh-v*"
 
 permissions:
   contents: write
@@ -71,8 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#agentmesh-v}"
-          version="${version#v}"
+          version="${GITHUB_REF_NAME#v}"
           name="agentmesh-v${version}-${{ matrix.target }}"
           mkdir -p "dist/${name}"
           binary="target/${{ matrix.target }}/release/agentmesh"

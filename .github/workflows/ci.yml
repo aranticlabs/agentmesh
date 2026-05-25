@@ -58,7 +58,7 @@ jobs:
           }
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          $release = Join-Path $tmp "releases\agentmesh-v0.1.0"
+          $release = Join-Path $tmp "releases\v0.1.0"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
           $cosign = Join-Path $tmp "cosign.exe"
@@ -85,7 +85,7 @@ jobs:
                   && args[3] == "--bundle"
                   && Path::new(&args[4]).is_file()
                   && args[5] == "--certificate-identity-regexp"
-                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
+                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
                   && args[7] == "--certificate-oidc-issuer"
                   && args[8] == "https://token.actions.githubusercontent.com"
                   && Path::new(&args[9]).is_file();
@@ -189,13 +189,13 @@ jobs:
 
           stable="$(sh installers/install.sh --print-url --channel=stable)"
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
-          case "$stable" in *agentmesh-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$stable" in */v0.1.0/agentmesh-v0.1.0-*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           platform="$(sh installers/install.sh --print-platform)"
-          mkdir -p "$tmp/releases/agentmesh-v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
+          mkdir -p "$tmp/releases/v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
 
           cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
           cat >"$cosign_artifact" <<'EOF'
@@ -208,7 +208,7 @@ jobs:
           test "$4" = "--bundle"
           test -f "$5"
           test "$6" = "--certificate-identity-regexp"
-          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
           test "$8" = "--certificate-oidc-issuer"
           test "$9" = "https://token.actions.githubusercontent.com"
           test -f "${10}"
@@ -233,7 +233,7 @@ jobs:
 
           stable_artifact="agentmesh-v0.1.0-$platform.tar.gz"
           nightly_artifact="agentmesh-nightly-$platform.tar.gz"
-          create_release "agentmesh-v0.1.0" "$stable_artifact"
+          create_release "v0.1.0" "$stable_artifact"
           create_release "nightly" "$nightly_artifact"
 
           export AGENTMESH_BASE_URL="file://$tmp/releases"
@@ -270,7 +270,7 @@ jobs:
           test "$4" = "--bundle"
           test -f "$5"
           test "$6" = "--certificate-identity-regexp"
-          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
           test "$8" = "--certificate-oidc-issuer"
           test "$9" = "https://token.actions.githubusercontent.com"
           test -f "${10}"

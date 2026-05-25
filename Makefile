@@ -73,7 +73,7 @@ release:
 		exit 1; \
 	fi
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
-	tag="agentmesh-v$(v)"; \
+	tag="v$(v)"; \
 	if [ "$$branch" != "main" ]; then \
 		echo "$(RED)[ERROR]$(NC) Releases must be tagged from main (currently on $$branch)"; \
 		exit 1; \
@@ -121,7 +121,7 @@ retag:
 		exit 1; \
 	fi
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
-	tag="agentmesh-v$(v)"; \
+	tag="v$(v)"; \
 	echo "$(BLUE)[INFO]$(NC) Pushing $$branch to origin..."; \
 	git push origin "$$branch"; \
 	echo "$(BLUE)[INFO]$(NC) Retagging $$tag..."; \

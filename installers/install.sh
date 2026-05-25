@@ -4,7 +4,7 @@ set -eu
 AGENTMESH_VERSION="${AGENTMESH_VERSION:-0.1.0}"
 AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentmesh/releases/download}"
 COSIGN_VERSION="${AGENTMESH_COSIGN_VERSION:-v2.6.3}"
-COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*}"
+COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*}"
 COSIGN_CERTIFICATE_OIDC_ISSUER="${AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 sha256_file() {
@@ -88,7 +88,7 @@ detect_platform() {
 
 release_tag() {
   case "$channel" in
-    stable) printf 'agentmesh-v%s\n' "$AGENTMESH_VERSION" ;;
+    stable) printf 'v%s\n' "$AGENTMESH_VERSION" ;;
     nightly) printf 'nightly\n' ;;
     *)
       echo "unsupported channel: $channel" >&2
