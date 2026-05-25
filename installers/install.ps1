@@ -149,6 +149,35 @@ function Test-Sha256SumsSignature {
     }
 }
 
+function Show-InstallSuccess {
+    param([string]$BinaryPath, [string]$Tag)
+    Write-Host ""
+    Write-Host " █████╗  ██████╗ ███████╗███╗   ██╗████████╗███╗   ███╗███████╗███████╗██╗  ██╗"
+    Write-Host "██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝████╗ ████║██╔════╝██╔════╝██║  ██║"
+    Write-Host "███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ██╔████╔██║█████╗  ███████╗███████║"
+    Write-Host "██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║"
+    Write-Host "██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ██║ ╚═╝ ██║███████╗███████║██║  ██║"
+    Write-Host "╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝"
+    Write-Host "                                                            By Arantic Digital"
+    Write-Host ""
+    Write-Host "AgentMesh is installed and ready."
+    Write-Host ""
+    Write-Host "Installed:"
+    Write-Host "  Binary:  $BinaryPath"
+    Write-Host "  Channel: $Channel ($Tag)"
+    Write-Host ""
+    Write-Host "Next steps in a repository:"
+    Write-Host "  1. agentmesh scan"
+    Write-Host "     See which runtimes and instruction files AgentMesh detects."
+    Write-Host "  2. agentmesh init"
+    Write-Host "     Set up project sync, lockfile state, and runtime hooks."
+    Write-Host "  3. agentmesh status"
+    Write-Host "     Confirm the mesh is healthy before committing changes."
+    Write-Host ""
+    Write-Host "Docs: https://agentmesh.sh/docs/"
+    Write-Host ""
+}
+
 function Install-AgentMesh {
     $platform = Get-AgentMeshPlatform
     $tag = Get-ReleaseTag
@@ -183,8 +212,9 @@ function Install-AgentMesh {
             throw "archive did not contain agentmesh.exe"
         }
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        Copy-Item -LiteralPath $binary.FullName -Destination (Join-Path $targetDir "agentmesh.exe") -Force
-        Write-Host "agentmesh installed to $(Join-Path $targetDir "agentmesh.exe")"
+        $targetBinary = Join-Path $targetDir "agentmesh.exe"
+        Copy-Item -LiteralPath $binary.FullName -Destination $targetBinary -Force
+        Show-InstallSuccess -BinaryPath $targetBinary -Tag $tag
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
