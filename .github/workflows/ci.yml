@@ -75,6 +75,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p agentmesh-cli
+      - name: Verify website static assets
+        run: |
+          python_bin="$(command -v python || command -v python3)"
+          "$python_bin" website/check-static.py
+      - name: Verify website browser render
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          npm install --prefix "$tmp/playwright" --no-save playwright@1.56.1
+          "$tmp/playwright/node_modules/.bin/playwright" install --with-deps chromium
+          NODE_PATH="$tmp/playwright/node_modules" node website/check-render.cjs
       - run: sh installers/install.sh --smoke
       - run: sh installers/install.sh --upgrade-help
       - name: Verify musl installer platform detection
