@@ -54,7 +54,8 @@ jobs:
           $release = Join-Path $tmp "releases\agentmesh-cli-v0.1.0"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
-          $cosign = Join-Path $tmp "cosign.cmd"
+          $cosign = Join-Path $tmp "cosign.exe"
+          $cosignSource = Join-Path $tmp "fake-cosign.rs"
           New-Item -ItemType Directory -Path $release, $stage, $install -Force | Out-Null
 
           Copy-Item target\release\agentmesh.exe (Join-Path $stage "agentmesh.exe")
@@ -65,17 +66,28 @@ jobs:
           New-Item -ItemType File -Path (Join-Path $release "SHA256SUMS.sig"), (Join-Path $release "SHA256SUMS.bundle") -Force | Out-Null
 
           @'
-          @echo off
-          if "%1" neq "verify-blob" exit /b 1
-          if "%2" neq "--signature" exit /b 1
-          if not exist "%3" exit /b 1
-          if "%4" neq "--bundle" exit /b 1
-          if not exist "%5" exit /b 1
-          if "%6" neq "--certificate-identity-regexp" exit /b 1
-          if "%8" neq "--certificate-oidc-issuer" exit /b 1
-          if "%9" neq "https://token.actions.githubusercontent.com" exit /b 1
-          exit /b 0
-          '@ | Set-Content -Path $cosign -Encoding ASCII
+          use std::{env, path::Path, process};
+
+          fn main() {
+              let args: Vec<String> = env::args().skip(1).collect();
+              let valid = args.len() == 10
+                  && args[0] == "verify-blob"
+                  && args[1] == "--signature"
+                  && Path::new(&args[2]).is_file()
+                  && args[3] == "--bundle"
+                  && Path::new(&args[4]).is_file()
+                  && args[5] == "--certificate-identity-regexp"
+                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+                  && args[7] == "--certificate-oidc-issuer"
+                  && args[8] == "https://token.actions.githubusercontent.com"
+                  && Path::new(&args[9]).is_file();
+
+              if !valid {
+                  process::exit(1);
+              }
+          }
+          '@ | Set-Content -Path $cosignSource -Encoding ASCII
+          rustc --edition 2021 $cosignSource -o $cosign
 
           $releaseRoot = (Resolve-Path (Join-Path $tmp "releases")).Path -replace "\\", "/"
           $env:AGENTMESH_BASE_URL = "file:///$releaseRoot"
