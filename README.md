@@ -6,63 +6,112 @@ The v0.1 binary is a local-first Rust CLI with bundled Claude Code and Codex ada
 normalizes project instructions, skills, and subagents into a shared repository model, then renders
 those entities back into each runtime's native file layout.
 
-The public documentation site is planned for [agentmesh.sh](https://agentmesh.sh).
+Documentation: [agentmesh.sh](https://agentmesh.sh)
 
 ## Install
 
-For local development, build the binary from source:
+```bash
+curl -fsSL https://agentmesh.sh/install.sh | sh
+```
+
+The npm package and upgrade/uninstall options are documented at
+[agentmesh.sh/installation/curl](https://agentmesh.sh/installation/curl).
+
+For local development, build from source:
 
 ```bash
 cargo build --workspace
 ./target/debug/agentmesh --help
 ```
 
-Installer wrappers live under [installers](installers/). Release installs verify archives against
-`SHA256SUMS` plus the published cosign signature before placing or delegating to the binary.
-
 ## Quickstart
 
-Inspect a repository without writing:
+**Prerequisites:** a git repository at your project root, and at least one supported runtime
+present or planned (Claude Code with `.claude/` and/or `CLAUDE.md`, or Codex with `.codex/` and/or
+`AGENTS.md`).
+
+Preview detection without writing:
 
 ```bash
 agentmesh scan
+```
+
+Initialize AgentMesh from your project root. This detects runtimes, imports entities into the
+canonical `.ai/` model, propagates to other runtimes, installs hooks, and writes `agentmesh.lock`:
+
+```bash
+cd /path/to/your/repo
+agentmesh init
+```
+
+If `AGENTS.md` and `CLAUDE.md` differ, `init` asks which is canonical. For scripts or CI:
+
+```bash
+agentmesh init --canonical-instructions=AGENTS.md -y
+```
+
+Verify health:
+
+```bash
 agentmesh status
 agentmesh doctor
 ```
 
-Start filesystem coverage. By default this spawns a background watcher; use `--foreground` when
-you want the notify loop attached to the current terminal:
+Commit the shared state teammates need:
 
 ```bash
-agentmesh watch
-agentmesh watch --foreground
+git add AGENTS.md .ai/ agentmesh.lock
+git commit -m "chore: initialize AgentMesh sync"
 ```
 
-Install runtime hooks explicitly when you are ready for native runtime integration:
+Do not commit machine-local hook files (`.claude/settings.local.json`, `.codex/hooks.json`). Each
+teammate runs `agentmesh init` on their machine. Add `.codex/hooks.json` to `.gitignore`.
+
+Codex requires a one-time trust approval for the command hook before it runs. Sync still works via
+the watcher daemon and manual `agentmesh sync` until then.
+
+| Situation                  | Command                              |
+| -------------------------- | ------------------------------------ |
+| Added a runtime after init | `agentmesh install --runtime <name>` |
+| Upgraded the binary        | `agentmesh upgrade`                  |
+| Commit-time drift check    | `agentmesh install --git-pre-commit` |
+| CI pipeline                | `agentmesh sync --check`             |
+
+Full walkthrough: [agentmesh.sh/quickstart](https://agentmesh.sh/quickstart)
+
+## Uninstall
+
+**From a project**, run from the repository root:
 
 ```bash
-agentmesh install --runtime claude
-agentmesh install --runtime codex
+agentmesh uninstall --yes
 ```
 
-Codex will require a one-time trust approval for the command hook before it runs.
+This stops the watcher, removes AgentMesh-owned hooks, and clears machine-local cache state. `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` are left intact so you can re-run `agentmesh init` later.
 
-After replacing or rebuilding the binary, repin repository hook integrity:
+To also remove repository-visible AgentMesh state:
 
 ```bash
-agentmesh upgrade
+agentmesh uninstall --yes --purge
 ```
 
-Run installer smoke checks without published artifacts:
+This deletes `agentmesh.lock`, `.ai/`, and `agentmesh.config.yaml`. Emitted runtime files are not removed automatically; delete or edit those manually if you no longer want them.
+
+Preview planned changes without writing:
 
 ```bash
-sh installers/install.sh --smoke
-sh installers/install.sh --upgrade-help
-pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
-pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
-sh installers/npm/bin/agentmesh --smoke
-sh installers/npm/bin/agentmesh --upgrade-help
+agentmesh uninstall --dry-run
 ```
+
+**Remove the binary** after uninstalling from each project:
+
+| Install method      | Command                                            |
+| ------------------- | -------------------------------------------------- |
+| curl / `install.sh` | `rm ~/.local/bin/agentmesh` (or your install path) |
+| npm                 | `npm uninstall -g @aranticlabs/agentmesh`          |
+| Windows             | Remove `agentmesh.exe` from your install directory |
+
+More detail: [agentmesh.sh/installation/curl](https://agentmesh.sh/installation/curl).
 
 ## Development
 
