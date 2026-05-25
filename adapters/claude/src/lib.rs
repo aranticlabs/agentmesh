@@ -6,8 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentmesh_adapter_sdk_rust::{
-    Adapter, AdapterError, AdapterMetadata, FormatTranslation, compose_frontmatter,
-    parse_frontmatter, sha256_bytes, skipped_entity, write_atomic,
+    compose_frontmatter, parse_frontmatter, sha256_bytes, skipped_entity, write_atomic, Adapter,
+    AdapterError, AdapterMetadata, FormatTranslation,
 };
 use agentmesh_protocol::{
     AdapterErrorCode, DetectResponse, EmitRequest, EmitResponse, EntityFile, EntityFileEncoding,
@@ -15,7 +15,7 @@ use agentmesh_protocol::{
     InstallHooksResponse, InstalledHook, RemoveHooksRequest, RemoveHooksResponse, RuntimeMode,
     SkippedPath,
 };
-use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 const SUPPORTED_ENTITIES: &[EntityType] = &[
@@ -594,7 +594,8 @@ fn slugify(value: &str) -> String {
 fn hash_files(files: &BTreeMap<PathBuf, EntityFile>) -> String {
     let mut bytes = Vec::new();
     for (path, file) in files {
-        bytes.extend_from_slice(path.as_os_str().as_encoded_bytes());
+        let path_string = path.to_string_lossy().replace('\\', "/");
+        bytes.extend_from_slice(path_string.as_bytes());
         bytes.push(0);
         bytes.extend_from_slice(file.encoding.as_str().as_bytes());
         bytes.push(0);
@@ -935,7 +936,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use agentmesh_adapter_sdk_rust::{Adapter, canonicalize_frontmatter};
+    use agentmesh_adapter_sdk_rust::{canonicalize_frontmatter, Adapter};
     use agentmesh_protocol::{
         EmitEntity, EmitRequest, EntityFile, EntityFileEncoding, ImportRequest, ImportedEntity,
         InstallHooksRequest, RemoveHooksRequest, RuntimeMode,
@@ -1147,11 +1148,9 @@ mod tests {
 
         assert!(response.files_written.is_empty());
         assert_eq!(response.skipped.len(), 1);
-        assert!(
-            !root
-                .join(".claude/skills/security-review/SKILL.md")
-                .exists()
-        );
+        assert!(!root
+            .join(".claude/skills/security-review/SKILL.md")
+            .exists());
     }
 
     #[test]
