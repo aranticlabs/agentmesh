@@ -1,0 +1,45 @@
+name: sync install scripts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - installers/install.sh
+      - installers/install.ps1
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agentmesh-docs
+        uses: actions/checkout@v4
+        with:
+          repository: aranticlabs/agentmesh-docs
+          token: ${{ secrets.AGENTMESH_DOCS_SYNC_TOKEN }}
+
+      - name: Sync install scripts from agentmesh
+        env:
+          GH_TOKEN: ${{ secrets.AGENTMESH_DOCS_SYNC_TOKEN }}
+          SOURCE_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/aranticlabs/agentmesh/contents/installers/install.sh?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.sh
+          gh api "repos/aranticlabs/agentmesh/contents/installers/install.ps1?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.ps1
+          chmod +x static/install.sh
+
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ secrets.AGENTMESH_DOCS_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- static/install.sh static/install.ps1; then
+            echo "No changes to sync."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/install.sh static/install.ps1
+          git commit -m "chore: sync install scripts from aranticlabs/agentmesh@${GITHUB_SHA:0:7}"
+          git push
