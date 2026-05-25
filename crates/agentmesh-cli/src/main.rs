@@ -1133,7 +1133,7 @@ fn find_preserved_version(
     runtime: &agentmesh_core::RuntimeName,
     at: Option<&str>,
 ) -> Result<PathBuf> {
-    let dir = cache.conflicts_dir.join(entity_id.as_str());
+    let dir = agentmesh_core::state::conflict_entity_dir(&cache.conflicts_dir, entity_id);
     let mut candidates = Vec::new();
     match fs::read_dir(&dir) {
         Ok(entries) => {

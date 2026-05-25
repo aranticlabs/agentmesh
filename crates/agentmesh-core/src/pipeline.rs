@@ -37,8 +37,9 @@ use crate::merge::{MergeError, MergeSide, MergeStatus, merge_markdown, preserve_
 use crate::mutex::{AgentmeshMutex, MutexError};
 use crate::pending_queue::{PendingQueue, PendingQueueError};
 use crate::state::{
-    CacheLayout, IntegrityPin, PendingAction, PendingSyncRecord, StateError, read_hook_ownership,
-    read_integrity_pin, read_json, sha256_bytes, sha256_file, write_atomic, write_integrity_pin,
+    CacheLayout, IntegrityPin, PendingAction, PendingSyncRecord, StateError, conflict_entity_dir,
+    read_hook_ownership, read_integrity_pin, read_json, sha256_bytes, sha256_file, write_atomic,
+    write_integrity_pin,
 };
 use crate::types::{EntityId, Hash, LocationKey, RuntimeName, TypeError};
 use crate::{
@@ -832,7 +833,7 @@ fn doctor_conflict_findings(cache: &CacheLayout, lockfile: &Lockfile) -> Result<
 }
 
 fn preserved_conflict_paths(cache: &CacheLayout, entity_id: &EntityId) -> Result<Vec<PathBuf>> {
-    let dir = cache.conflicts_dir.join(entity_id.as_str());
+    let dir = conflict_entity_dir(&cache.conflicts_dir, entity_id);
     let mut paths = Vec::new();
     match fs::read_dir(&dir) {
         Ok(entries) => {
@@ -3198,7 +3199,7 @@ fn selected_preserved_version(
     at: Option<&str>,
 ) -> Result<PathBuf> {
     if let Some(timestamp) = at {
-        let dir = cache.conflicts_dir.join(entity_id.as_str());
+        let dir = conflict_entity_dir(&cache.conflicts_dir, entity_id);
         let path = dir.join(format!("{}-{timestamp}.md", runtime.as_str()));
         if path.is_file() {
             return Ok(path);
@@ -3216,7 +3217,7 @@ fn latest_preserved_version(
     entity_id: &EntityId,
     runtime: &RuntimeName,
 ) -> Result<PathBuf> {
-    let dir = cache.conflicts_dir.join(entity_id.as_str());
+    let dir = conflict_entity_dir(&cache.conflicts_dir, entity_id);
     let mut candidates = Vec::new();
     match fs::read_dir(&dir) {
         Ok(entries) => {
@@ -4365,7 +4366,10 @@ schema: 1
             lockfile.entities[&entity_id("skill:conflict-demo")].pending_conflict_resolution,
             Some(true)
         );
-        let conflict_dir = cache.conflicts_dir.join("skill:conflict-demo");
+        let conflict_dir = crate::state::conflict_entity_dir(
+            &cache.conflicts_dir,
+            &entity_id("skill:conflict-demo"),
+        );
         let preserved = match fs::read_dir(&conflict_dir) {
             Ok(entries) => entries.count(),
             Err(error) => panic!("conflict dir should be readable: {error}"),

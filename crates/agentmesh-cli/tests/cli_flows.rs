@@ -10,6 +10,13 @@ fn agentmesh_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_agentmesh"))
 }
 
+fn entity_id(value: &str) -> agentmesh_core::EntityId {
+    match agentmesh_core::EntityId::new(value) {
+        Ok(entity_id) => entity_id,
+        Err(error) => panic!("test entity ID should be valid: {error}"),
+    }
+}
+
 fn run_agentmesh(repo: &Path, cache: &Path, args: &[&str]) -> Output {
     match Command::new(agentmesh_bin())
         .arg("--cwd")
@@ -225,6 +232,14 @@ fn read(path: impl AsRef<Path>) -> String {
     }
 }
 
+fn json_string_fragment(value: &str) -> String {
+    let encoded = match serde_json::to_string(value) {
+        Ok(encoded) => encoded,
+        Err(error) => panic!("JSON string should serialize: {error}"),
+    };
+    encoded.trim_matches('"').to_string()
+}
+
 fn find_named_file(root: &Path, file_name: &str) -> Option<PathBuf> {
     let entries = fs::read_dir(root).ok()?;
     for entry in entries {
@@ -330,11 +345,12 @@ entities:
     if let Err(error) = layout.ensure_dirs() {
         panic!("cache dirs should be created: {error}");
     }
+    let conflict_dir = agentmesh_core::state::conflict_entity_dir(
+        &layout.conflicts_dir,
+        &entity_id("skill:recover"),
+    );
     write(
-        layout
-            .conflicts_dir
-            .join("skill:recover")
-            .join("claude-unix-2.md"),
+        conflict_dir.join("claude-unix-2.md"),
         "---\nname: recover\n---\nRestored body.\n",
     );
 }
@@ -1023,18 +1039,16 @@ entities:
     if let Err(error) = layout.ensure_dirs() {
         panic!("cache dirs should be created: {error}");
     }
+    let conflict_dir = agentmesh_core::state::conflict_entity_dir(
+        &layout.conflicts_dir,
+        &entity_id("skill:recover"),
+    );
     write(
-        layout
-            .conflicts_dir
-            .join("skill:recover")
-            .join("claude-unix-1.md"),
+        conflict_dir.join("claude-unix-1.md"),
         "---\nname: recover\n---\nOlder body.\n",
     );
     write(
-        layout
-            .conflicts_dir
-            .join("skill:recover")
-            .join("claude-unix-2.md"),
+        conflict_dir.join("claude-unix-2.md"),
         "---\nname: recover\n---\nRestored body.\n",
     );
 
@@ -1090,18 +1104,16 @@ entities:
     if let Err(error) = layout.ensure_dirs() {
         panic!("cache dirs should be created: {error}");
     }
+    let conflict_dir = agentmesh_core::state::conflict_entity_dir(
+        &layout.conflicts_dir,
+        &entity_id("skill:recover"),
+    );
     write(
-        layout
-            .conflicts_dir
-            .join("skill:recover")
-            .join("claude-unix-1.md"),
+        conflict_dir.join("claude-unix-1.md"),
         "---\nname: recover\n---\nOlder body.\n",
     );
     write(
-        layout
-            .conflicts_dir
-            .join("skill:recover")
-            .join("claude-unix-2.md"),
+        conflict_dir.join("claude-unix-2.md"),
         "---\nname: recover\n---\nRestored body.\n",
     );
 
@@ -1292,13 +1304,18 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         &["--silent", "init", "--yes"],
     ));
     let binary = agentmesh_bin().display().to_string();
+    let stale_binary = temp.path().join("old-agentmesh").display().to_string();
+    let escaped_binary = json_string_fragment(&binary);
+    let escaped_stale_binary = json_string_fragment(&stale_binary);
     for overlay in [
         repo.join(".claude/settings.local.json"),
         repo.join(".codex/hooks.json"),
     ] {
-        let stale = read(&overlay).replace(&binary, "/tmp/old-agentmesh");
+        let stale = read(&overlay)
+            .replace(&escaped_binary, &escaped_stale_binary)
+            .replace(&binary, &stale_binary);
         write(&overlay, &stale);
-        assert!(read(&overlay).contains("/tmp/old-agentmesh"));
+        assert!(read(&overlay).contains(&escaped_stale_binary));
     }
 
     let upgrade = run_agentmesh(&repo, &cache, &["--silent", "upgrade", "--yes"]);
@@ -1309,8 +1326,8 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         repo.join(".codex/hooks.json"),
     ] {
         let contents = read(&overlay);
-        assert!(!contents.contains("/tmp/old-agentmesh"));
-        assert!(contents.contains(&binary));
+        assert!(!contents.contains(&escaped_stale_binary));
+        assert!(contents.contains(&escaped_binary));
     }
 }
 
@@ -1385,7 +1402,7 @@ fn service_registration_writes_platform_definition() {
 
     assert_success(&register);
     let search_root = if cfg!(target_os = "windows") {
-        repo.as_path()
+        cache.as_path()
     } else {
         home.as_path()
     };

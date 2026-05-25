@@ -589,17 +589,6 @@ fn run_foreground(
     );
     record.started_at = started_at;
     write_record(layout, &record)?;
-    append_log(
-        &layout.log_file,
-        "start-foreground",
-        json!({
-            "pid": record.pid,
-            "persistent": record.persistent,
-            "debounce_ms": record.debounce_ms,
-            "vcs_throttle_ms": record.vcs_throttle_ms,
-        }),
-    )?;
-
     let (sender, receiver) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
         let _send_result = sender.send(event);
@@ -616,6 +605,17 @@ fn run_foreground(
             path: repo_root.to_path_buf(),
             source,
         })?;
+
+    append_log(
+        &layout.log_file,
+        "start-foreground",
+        json!({
+            "pid": record.pid,
+            "persistent": record.persistent,
+            "debounce_ms": record.debounce_ms,
+            "vcs_throttle_ms": record.vcs_throttle_ms,
+        }),
+    )?;
 
     let mut loop_state = ForegroundLoop::new(&opts);
     loop {

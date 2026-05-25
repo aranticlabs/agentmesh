@@ -540,7 +540,7 @@ fn yaml_mapping_to_json(
 }
 
 fn json_to_yaml(value: &JsonValue) -> agentmesh_adapter_sdk_rust::Result<YamlValue> {
-    serde_norway::from_str(&value.to_string()).map_err(|source| {
+    serde_norway::to_value(value).map_err(|source| {
         AdapterError::rpc(
             AdapterErrorCode::FormatTranslationFailed,
             format!("failed to convert JSON value to YAML: {source}"),

@@ -12,7 +12,7 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 
 use crate::EntityType;
-use crate::types::{Hash, RuntimeName};
+use crate::types::{EntityId, Hash, RuntimeName};
 
 /// Machine-local state result type.
 pub type Result<T> = std::result::Result<T, StateError>;
@@ -223,6 +223,16 @@ pub fn repo_cache_key(repo_root: &Path) -> Result<String> {
     let absolute = absolute_path(repo_root)?;
     let digest = blake3::hash(&path_bytes(absolute.as_os_str()));
     Ok(digest.to_hex().chars().take(16).collect())
+}
+
+/// Returns the cache directory used for preserved versions of one entity.
+#[must_use]
+pub fn conflict_entity_dir(conflicts_dir: &Path, entity_id: &EntityId) -> PathBuf {
+    conflicts_dir.join(entity_cache_segment(entity_id))
+}
+
+fn entity_cache_segment(entity_id: &EntityId) -> String {
+    entity_id.as_str().replace(':', "--")
 }
 
 /// Computes a SHA-256 hash over in-memory bytes.

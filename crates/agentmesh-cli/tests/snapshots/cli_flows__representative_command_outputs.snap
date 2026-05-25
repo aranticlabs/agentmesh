@@ -224,7 +224,7 @@ stderr:
 exit: Some(0)
 stdout:
 restore dry-run:
-  from: <cache>/<cache-key>/conflicts/skill:recover/claude-unix-2.md
+  from: <cache>/<cache-key>/conflicts/skill--recover/claude-unix-2.md
   to:   <repo>/.ai/skills/recover/SKILL.md
   at:   unix-2
   No files were changed.
