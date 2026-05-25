@@ -41,7 +41,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace
-      - run: cargo build --locked --release -p agentmesh-cli
+      - run: cargo build --locked --release -p agentmesh
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintPlatform
@@ -58,7 +58,7 @@ jobs:
           }
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          $release = Join-Path $tmp "releases\agentmesh-cli-v0.1.0"
+          $release = Join-Path $tmp "releases\agentmesh-v0.1.0"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
           $cosign = Join-Path $tmp "cosign.exe"
@@ -85,7 +85,7 @@ jobs:
                   && args[3] == "--bundle"
                   && Path::new(&args[4]).is_file()
                   && args[5] == "--certificate-identity-regexp"
-                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
                   && args[7] == "--certificate-oidc-issuer"
                   && args[8] == "https://token.actions.githubusercontent.com"
                   && Path::new(&args[9]).is_file();
@@ -124,7 +124,7 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agentmesh-cli
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agentmesh
       - run: target/x86_64-unknown-linux-musl/release/agentmesh --version
 
   supply-chain:
@@ -151,7 +151,7 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release -p agentmesh-cli
+      - run: cargo build --locked --release -p agentmesh
       - run: make ci-installers
       - name: Verify website browser render
         run: make website-render
@@ -199,17 +199,17 @@ jobs:
 
           stable="$(sh installers/install.sh --print-url --channel=stable)"
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
-          case "$stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$stable" in *agentmesh-v0.1.0*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
           npm_stable="$(AGENTMESH_CHANNEL=stable sh installers/npm/bin/agentmesh --print-url)"
           npm_nightly="$(AGENTMESH_CHANNEL=nightly sh installers/npm/bin/agentmesh --print-url)"
-          case "$npm_stable" in *agentmesh-cli-v0.1.0*) ;; *) exit 1 ;; esac
+          case "$npm_stable" in *agentmesh-v0.1.0*) ;; *) exit 1 ;; esac
           case "$npm_nightly" in */nightly/*) ;; *) exit 1 ;; esac
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           platform="$(sh installers/install.sh --print-platform)"
-          mkdir -p "$tmp/releases/agentmesh-cli-v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
+          mkdir -p "$tmp/releases/agentmesh-v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
 
           cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
           cat >"$cosign_artifact" <<'EOF'
@@ -222,7 +222,7 @@ jobs:
           test "$4" = "--bundle"
           test -f "$5"
           test "$6" = "--certificate-identity-regexp"
-          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
           test "$8" = "--certificate-oidc-issuer"
           test "$9" = "https://token.actions.githubusercontent.com"
           test -f "${10}"
@@ -247,7 +247,7 @@ jobs:
 
           stable_artifact="agentmesh-v0.1.0-$platform.tar.gz"
           nightly_artifact="agentmesh-nightly-$platform.tar.gz"
-          create_release "agentmesh-cli-v0.1.0" "$stable_artifact"
+          create_release "agentmesh-v0.1.0" "$stable_artifact"
           create_release "nightly" "$nightly_artifact"
 
           export AGENTMESH_BASE_URL="file://$tmp/releases"
@@ -289,7 +289,7 @@ jobs:
           test "$4" = "--bundle"
           test -f "$5"
           test "$6" = "--certificate-identity-regexp"
-          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-cli-v).*"
+          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/(v|agentmesh-v).*"
           test "$8" = "--certificate-oidc-issuer"
           test "$9" = "https://token.actions.githubusercontent.com"
           test -f "${10}"

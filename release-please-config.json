@@ -4,8 +4,8 @@
   "packages": {
     ".": {
       "changelog-path": "CHANGELOG.md",
-      "component": "agentmesh-cli",
-      "package-name": "agentmesh-cli",
+      "component": "agentmesh",
+      "package-name": "agentmesh",
       "release-type": "rust",
       "tag-separator": "-"
     }

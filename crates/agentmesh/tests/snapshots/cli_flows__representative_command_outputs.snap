@@ -1,5 +1,5 @@
 ---
-source: crates/agentmesh-cli/tests/cli_flows.rs
+source: crates/agentmesh/tests/cli_flows.rs
 expression: surface
 ---
 ## status

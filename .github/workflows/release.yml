@@ -5,7 +5,7 @@ on:
   push:
     tags:
       - "v*"
-      - "agentmesh-cli-v*"
+      - "agentmesh-v*"
 
 permissions:
   contents: write
@@ -66,12 +66,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
       - name: Build
-        run: cargo build --locked --release --target ${{ matrix.target }} -p agentmesh-cli
+        run: cargo build --locked --release --target ${{ matrix.target }} -p agentmesh
       - name: Stage artifact
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#agentmesh-cli-v}"
+          version="${GITHUB_REF_NAME#agentmesh-v}"
           version="${version#v}"
           name="agentmesh-v${version}-${{ matrix.target }}"
           mkdir -p "dist/${name}"

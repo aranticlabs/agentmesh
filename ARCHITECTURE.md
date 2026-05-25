@@ -4,7 +4,7 @@ AgentMesh is a single Rust workspace that builds one `agentmesh` CLI binary with
 runtime adapters linked in.
 
 ```text
-agentmesh-cli
+agentmesh
   -> agentmesh-core
   -> agentmesh-watcher
   -> agentmesh-adapter-sdk-rust
@@ -17,7 +17,7 @@ adapters/*     <-> agentmesh-protocol
 
 ## Crates
 
-`crates/agentmesh-cli` owns argument parsing, user-facing output, hidden adapter dispatch, and thin
+`crates/agentmesh` owns argument parsing, user-facing output, hidden adapter dispatch, and thin
 command orchestration.
 
 `crates/agentmesh-core` owns persisted state, lockfile types, identity, merge, queue, and machine
@@ -60,7 +60,7 @@ or sync policy decisions. Those decisions belong in core APIs.
 
 ## Common Changes
 
-Add a CLI command by extending `crates/agentmesh-cli/src/main.rs`, delegating behavior to core where
+Add a CLI command by extending `crates/agentmesh/src/main.rs`, delegating behavior to core where
 possible, and adding a focused CLI test.
 
 Add a protocol field in `crates/agentmesh-protocol`, then update the SDK dispatch and adapter

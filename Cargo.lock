@@ -18,6 +18,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agentmesh"
+version = "0.1.0"
+dependencies = [
+ "agentmesh-adapter-claude",
+ "agentmesh-adapter-codex",
+ "agentmesh-adapter-sdk-rust",
+ "agentmesh-core",
+ "agentmesh-protocol",
+ "agentmesh-watcher",
+ "clap",
+ "insta",
+ "miette",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "agentmesh-adapter-claude"
 version = "0.1.0"
 dependencies = [
@@ -53,24 +71,6 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
-]
-
-[[package]]
-name = "agentmesh-cli"
-version = "0.1.0"
-dependencies = [
- "agentmesh-adapter-claude",
- "agentmesh-adapter-codex",
- "agentmesh-adapter-sdk-rust",
- "agentmesh-core",
- "agentmesh-protocol",
- "agentmesh-watcher",
- "clap",
- "insta",
- "miette",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

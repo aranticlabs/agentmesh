@@ -29,6 +29,7 @@ node_modules/
 
 # Rust
 /target/
+/fuzz/target/
 **/*.rs.bk
 
 # Build and test output

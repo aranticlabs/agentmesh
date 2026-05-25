@@ -1,5 +1,5 @@
 ---
-source: crates/agentmesh-cli/src/main.rs
+source: crates/agentmesh/src/main.rs
 expression: command_help_surface()
 ---
 ## agentmesh

@@ -59,7 +59,7 @@ See `npm/README.md` for package layout.
 For contributors and local development only:
 
 ```bash
-cargo build --release -p agentmesh-cli
+cargo build --release -p agentmesh
 ```
 
 ## Upgrade
