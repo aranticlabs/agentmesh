@@ -108,9 +108,11 @@ jobs:
 
           Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "0000  $artifact`n"
           powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir (Join-Path $tmp "bad-install")
-          if ($LASTEXITCODE -eq 0) {
+          $badExitCode = $LASTEXITCODE
+          if ($badExitCode -eq 0) {
             throw "install.ps1 accepted a mismatched archive checksum"
           }
+          exit 0
 
   musl:
     name: rust (x86_64-unknown-linux-musl)
