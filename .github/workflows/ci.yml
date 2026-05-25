@@ -50,6 +50,13 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
+          function Assert-LastExitCode {
+            param([string]$Message)
+            if ($LASTEXITCODE -ne 0) {
+              throw $Message
+            }
+          }
+
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
           $release = Join-Path $tmp "releases\agentmesh-cli-v0.1.0"
           $stage = Join-Path $tmp "stage\agentmesh"
@@ -61,6 +68,7 @@ jobs:
           Copy-Item target\release\agentmesh.exe (Join-Path $stage "agentmesh.exe")
           $artifact = "agentmesh-v0.1.0-x86_64-pc-windows-msvc.tar.gz"
           tar -czf (Join-Path $release $artifact) -C (Join-Path $tmp "stage") agentmesh
+          Assert-LastExitCode "failed to create test release archive"
           $hash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $release $artifact)).Hash.ToLowerInvariant()
           Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "$hash  $artifact`n"
           New-Item -ItemType File -Path (Join-Path $release "SHA256SUMS.sig"), (Join-Path $release "SHA256SUMS.bundle") -Force | Out-Null
@@ -88,21 +96,19 @@ jobs:
           }
           '@ | Set-Content -Path $cosignSource -Encoding ASCII
           rustc --edition 2021 $cosignSource -o $cosign
+          Assert-LastExitCode "failed to compile fake cosign verifier"
 
           $releaseRoot = (Resolve-Path (Join-Path $tmp "releases")).Path -replace "\\", "/"
           $env:AGENTMESH_BASE_URL = "file:///$releaseRoot"
           $env:AGENTMESH_COSIGN_BIN = $cosign
           powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir $install
+          Assert-LastExitCode "install.ps1 failed for valid fake release"
           & (Join-Path $install "agentmesh.exe") --version
+          Assert-LastExitCode "installed agentmesh.exe did not run"
 
           Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "0000  $artifact`n"
-          $failed = $false
-          try {
-            powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir (Join-Path $tmp "bad-install")
-          } catch {
-            $failed = $true
-          }
-          if (-not $failed) {
+          powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir (Join-Path $tmp "bad-install")
+          if ($LASTEXITCODE -eq 0) {
             throw "install.ps1 accepted a mismatched archive checksum"
           }
 
