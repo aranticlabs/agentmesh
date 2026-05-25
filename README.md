@@ -58,19 +58,16 @@ Run installer smoke checks without published artifacts:
 ```bash
 sh installers/install.sh --smoke
 sh installers/install.sh --upgrade-help
+pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
+pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
 sh installers/npm/bin/agentmesh --smoke
 sh installers/npm/bin/agentmesh --upgrade-help
-python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --smoke
-python -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path("installers/pip"))); import agentmesh_wrapper; raise SystemExit(agentmesh_wrapper.main())' --upgrade-help
 ```
 
 ## Development
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace
+make ci
 ```
 
 The workspace is pinned by [rust-toolchain.toml](rust-toolchain.toml).

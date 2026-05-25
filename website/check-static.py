@@ -145,8 +145,10 @@ def check_install_commands() -> None:
     index = (WEBSITE / "index.html").read_text()
     if f"npm install -g {npm_package}" not in index:
         raise SystemExit("website npm install command does not match package metadata")
-    if "brew install aranticlabs/agentmesh/agentmesh" not in index:
-        raise SystemExit("website Homebrew install command does not match tap naming")
+    if "curl -fsSL https://agentmesh.sh/install.sh | sh" not in index:
+        raise SystemExit("website macOS/Linux install command is missing")
+    if "irm https://agentmesh.sh/install.ps1 | iex" not in index:
+        raise SystemExit("website Windows install command is missing")
 
 
 def main() -> None:

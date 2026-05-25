@@ -133,7 +133,7 @@ jobs:
             dist/SHA256SUMS.sig
             dist/SHA256SUMS.bundle
 
-  package-publish-ready:
+  npm-publish-ready:
     if: startsWith(github.ref, 'refs/tags/')
     needs: publish
     runs-on: ubuntu-latest
@@ -143,10 +143,4 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - run: npm pack ./installers/npm --dry-run
-      - run: python -m pip install build twine
-      - run: python -m build installers/pip
-      - run: python -m twine check installers/pip/dist/*

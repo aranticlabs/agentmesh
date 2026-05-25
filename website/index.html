@@ -78,7 +78,7 @@
           <div class="section-header">
             <div>
               <p class="eyebrow">Install</p>
-              <h2>Four channels, one verified binary.</h2>
+              <h2>Direct installers plus an npm wrapper.</h2>
             </div>
             <p>
               Release installs verify the archive against the checksum manifest and cosign
@@ -87,20 +87,16 @@
           </div>
           <div class="install-grid">
             <div class="install-row">
-              <h3>curl</h3>
+              <h3>macOS / Linux</h3>
               <pre><code>curl -fsSL https://agentmesh.sh/install.sh | sh</code></pre>
             </div>
             <div class="install-row">
-              <h3>Homebrew</h3>
-              <pre><code>brew install aranticlabs/agentmesh/agentmesh</code></pre>
+              <h3>Windows</h3>
+              <pre><code>irm https://agentmesh.sh/install.ps1 | iex</code></pre>
             </div>
             <div class="install-row">
               <h3>npm</h3>
               <pre><code>npm install -g @aranticlabs/agentmesh</code></pre>
-            </div>
-            <div class="install-row">
-              <h3>pipx</h3>
-              <pre><code>pipx install agentmesh</code></pre>
             </div>
           </div>
         </div>
