@@ -10,8 +10,16 @@ Documentation: [agentmesh.sh](https://agentmesh.sh)
 
 ## Install
 
+**macOS / Linux:**
+
 ```bash
 curl -fsSL https://agentmesh.sh/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://agentmesh.sh/install.ps1 | iex
 ```
 
 The npm package and upgrade/uninstall options are documented at
