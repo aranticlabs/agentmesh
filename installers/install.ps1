@@ -13,13 +13,15 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$AgentMeshVersion = if ($env:AGENTMESH_VERSION) { $env:AGENTMESH_VERSION } else { "0.1.0" }
+$AgentMeshVersion = if ($env:AGENTMESH_VERSION) { $env:AGENTMESH_VERSION } else { "latest" }
 $BaseUrl = if ($env:AGENTMESH_BASE_URL) { $env:AGENTMESH_BASE_URL } else { "https://github.com/aranticlabs/agentmesh/releases/download" }
+$ReleaseApiUrl = if ($env:AGENTMESH_RELEASE_API_URL) { $env:AGENTMESH_RELEASE_API_URL } else { "https://api.github.com/repos/aranticlabs/agentmesh/releases/latest" }
 $CosignVersion = if ($env:AGENTMESH_COSIGN_VERSION) { $env:AGENTMESH_COSIGN_VERSION } else { "v2.6.3" }
 $CosignIdentity = if ($env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP) { $env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP } else { "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*" }
 $CosignIssuer = if ($env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER) { $env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }
 $script:SpinnerState = $null
 $script:SpinnerThread = $null
+$script:StableVersion = $null
 
 function Test-AgentMeshColor {
     return -not [Console]::IsErrorRedirected -and -not $env:NO_COLOR -and $env:AGENTMESH_NO_COLOR -ne "1"
@@ -148,7 +150,7 @@ function Get-AgentMeshPlatform {
 
 function Get-ReleaseTag {
     switch ($Channel) {
-        "stable" { return "v$AgentMeshVersion" }
+        "stable" { return "v$(Get-StableVersion)" }
         "nightly" { return "nightly" }
     }
 }
@@ -156,9 +158,51 @@ function Get-ReleaseTag {
 function Get-ArtifactName {
     param([string]$Platform)
     switch ($Channel) {
-        "stable" { return "agentmesh-v$AgentMeshVersion-$Platform.tar.gz" }
+        "stable" { return "agentmesh-v$(Get-StableVersion)-$Platform.tar.gz" }
         "nightly" { return "agentmesh-nightly-$Platform.tar.gz" }
     }
+}
+
+function Get-SmokeArtifactName {
+    param([string]$Platform)
+    switch ($Channel) {
+        "stable" { return "agentmesh-stable-$Platform.tar.gz" }
+        "nightly" { return "agentmesh-nightly-$Platform.tar.gz" }
+    }
+}
+
+function Get-DisplayTag {
+    switch ($Channel) {
+        "stable" { return "latest" }
+        "nightly" { return "nightly" }
+    }
+}
+
+function Get-StableVersion {
+    if ($script:StableVersion) {
+        return $script:StableVersion
+    }
+
+    if ($AgentMeshVersion -eq "latest") {
+        if ($env:AGENTMESH_LATEST_VERSION) {
+            $script:StableVersion = $env:AGENTMESH_LATEST_VERSION.TrimStart("v")
+        } else {
+            $release = Invoke-RestMethod -Uri $ReleaseApiUrl
+            $tag = [string]$release.tag_name
+            if (-not $tag) {
+                throw "failed to resolve latest AgentMesh release from $ReleaseApiUrl"
+            }
+            $script:StableVersion = $tag.TrimStart("v")
+        }
+    } else {
+        $script:StableVersion = $AgentMeshVersion.TrimStart("v")
+    }
+
+    if ($script:StableVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        throw "invalid AgentMesh version: $script:StableVersion"
+    }
+
+    return $script:StableVersion
 }
 
 function Join-Url {
@@ -365,12 +409,12 @@ if ($PrintUrl) {
     exit 0
 }
 if ($PrintBanner) {
-    Show-InstallSuccess -BinaryPath "<agentmesh-binary>" -Tag (Get-ReleaseTag)
+    Show-InstallSuccess -BinaryPath "<agentmesh-binary>" -Tag (Get-DisplayTag)
     exit 0
 }
 if ($Smoke) {
     $platform = Get-AgentMeshPlatform
-    $artifact = Get-ArtifactName -Platform $platform
+    $artifact = Get-SmokeArtifactName -Platform $platform
     Write-Output "agentmesh Windows installer smoke ok (platform=$platform artifact=$artifact)"
     exit 0
 }

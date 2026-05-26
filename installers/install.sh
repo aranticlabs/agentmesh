@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
-AGENTMESH_VERSION="${AGENTMESH_VERSION:-0.1.0}"
+AGENTMESH_VERSION="${AGENTMESH_VERSION:-latest}"
 AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentmesh/releases/download}"
+AGENTMESH_RELEASE_API_URL="${AGENTMESH_RELEASE_API_URL:-https://api.github.com/repos/aranticlabs/agentmesh/releases/latest}"
 COSIGN_VERSION="${AGENTMESH_COSIGN_VERSION:-v2.6.3}"
 COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*}"
 COSIGN_CERTIFICATE_OIDC_ISSUER="${AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 SPINNER_PID=""
+STABLE_VERSION=""
 
 spinner_enabled() {
   [ -t 2 ] && [ "${AGENTMESH_NO_SPINNER:-}" != "1" ]
@@ -168,7 +170,7 @@ detect_platform() {
 
 release_tag() {
   case "$channel" in
-    stable) printf 'v%s\n' "$AGENTMESH_VERSION" ;;
+    stable) printf 'v%s\n' "$(stable_version)" ;;
     nightly) printf 'nightly\n' ;;
     *)
       echo "unsupported channel: $channel" >&2
@@ -180,8 +182,61 @@ release_tag() {
 artifact_name() {
   platform="$1"
   case "$channel" in
-    stable) printf 'agentmesh-v%s-%s.tar.gz\n' "$AGENTMESH_VERSION" "$platform" ;;
+    stable) printf 'agentmesh-v%s-%s.tar.gz\n' "$(stable_version)" "$platform" ;;
     nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
+  esac
+}
+
+smoke_artifact_name() {
+  platform="$1"
+  case "$channel" in
+    stable) printf 'agentmesh-stable-%s.tar.gz\n' "$platform" ;;
+    nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
+  esac
+}
+
+stable_version() {
+  if [ -n "$STABLE_VERSION" ]; then
+    printf '%s\n' "$STABLE_VERSION"
+    return
+  fi
+
+  case "$AGENTMESH_VERSION" in
+    latest)
+      STABLE_VERSION="$(latest_release_version)"
+      ;;
+    v*)
+      STABLE_VERSION="${AGENTMESH_VERSION#v}"
+      ;;
+    *)
+      STABLE_VERSION="$AGENTMESH_VERSION"
+      ;;
+  esac
+
+  if ! printf '%s\n' "$STABLE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "invalid AgentMesh version: $STABLE_VERSION" >&2
+    exit 64
+  fi
+
+  printf '%s\n' "$STABLE_VERSION"
+}
+
+latest_release_version() {
+  if [ -n "${AGENTMESH_LATEST_VERSION:-}" ]; then
+    printf '%s\n' "${AGENTMESH_LATEST_VERSION#v}"
+    return
+  fi
+
+  output="${TMPDIR:-/tmp}/agentmesh-latest-release.$$"
+  fetch_url "$AGENTMESH_RELEASE_API_URL" "$output"
+  tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$output" | head -n 1)"
+  rm -f "$output"
+  case "$tag" in
+    v[0-9]*) printf '%s\n' "${tag#v}" ;;
+    *)
+      echo "failed to resolve latest AgentMesh release from $AGENTMESH_RELEASE_API_URL" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -586,6 +641,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$command" in
+  print-platform|verify-sha256|verify-sha256sums|verify-sha256sums-signature|help|upgrade-help|smoke) ;;
+  *)
+    if [ "$channel" = "stable" ]; then
+      STABLE_VERSION="$(stable_version)"
+    fi
+    ;;
+esac
+
+case "$command" in
   help)
     cat <<'USAGE'
 AgentMesh installer
@@ -602,12 +666,14 @@ Usage:
 
 The installer downloads the platform archive, verifies it against SHA256SUMS,
 verifies the SHA256SUMS signature with cosign, and installs the single binary.
+Stable installs resolve the latest GitHub release by default. Set
+AGENTMESH_VERSION=x.y.z to install a specific stable version.
 USAGE
     exit 0
     ;;
   smoke)
     platform="$(detect_platform)"
-    printf 'agentmesh installer smoke ok (channel=%s platform=%s artifact=%s)\n' "$channel" "$platform" "$(artifact_name "$platform")"
+    printf 'agentmesh installer smoke ok (channel=%s platform=%s artifact=%s)\n' "$channel" "$platform" "$(smoke_artifact_name "$platform")"
     exit 0
     ;;
   upgrade-help)

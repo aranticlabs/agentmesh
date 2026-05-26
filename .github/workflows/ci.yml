@@ -75,7 +75,15 @@ jobs:
           }
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          $release = Join-Path $tmp "releases\v0.1.0"
+          $stableUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+          $stableTail = ($stableUrl -split '/download/', 2)[1]
+          $stableTag = ($stableTail -split '/', 2)[0]
+          $stableArtifact = Split-Path -Leaf $stableUrl
+          $stableVersion = $stableArtifact -replace '^agentmesh-v([0-9]+\.[0-9]+\.[0-9]+)-.*$', '$1'
+          if ($stableTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $stableVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "failed to parse stable installer URL: $stableUrl"
+          }
+          $release = Join-Path $tmp "releases\$stableTag"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
           $cosign = Join-Path $tmp "cosign.exe"
@@ -83,7 +91,7 @@ jobs:
           New-Item -ItemType Directory -Path $release, $stage, $install -Force | Out-Null
 
           Copy-Item target\release\agentmesh.exe (Join-Path $stage "agentmesh.exe")
-          $artifact = "agentmesh-v0.1.0-x86_64-pc-windows-msvc.tar.gz"
+          $artifact = "agentmesh-v$stableVersion-x86_64-pc-windows-msvc.tar.gz"
           tar -czf (Join-Path $release $artifact) -C (Join-Path $tmp "stage") agentmesh
           Assert-LastExitCode "failed to create test release archive"
           $hash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $release $artifact)).Hash.ToLowerInvariant()
@@ -118,6 +126,7 @@ jobs:
           $releaseRoot = (Resolve-Path (Join-Path $tmp "releases")).Path -replace "\\", "/"
           $env:AGENTMESH_BASE_URL = "file:///$releaseRoot"
           $env:AGENTMESH_COSIGN_BIN = $cosign
+          $env:AGENTMESH_LATEST_VERSION = $stableTag
           powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir $install
           Assert-LastExitCode "install.ps1 failed for valid fake release"
           & (Join-Path $install "agentmesh.exe") --version
@@ -205,14 +214,22 @@ jobs:
           }
 
           stable="$(sh installers/install.sh --print-url --channel=stable)"
+          stable_artifact_url="$(printf '%s\n' "$stable" | sed -n 's/^artifact_url=//p')"
+          stable_tail="${stable_artifact_url#*/download/}"
+          stable_tag="${stable_tail%%/*}"
+          stable_artifact="${stable_artifact_url##*/}"
+          stable_version="${stable_artifact#agentmesh-v}"
+          stable_version="${stable_version%%-*}"
+          case "$stable_tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
+          case "$stable_version" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
-          case "$stable" in */v0.1.0/agentmesh-v0.1.0-*) ;; *) exit 1 ;; esac
+          case "$stable" in */"$stable_tag"/agentmesh-v"$stable_version"-*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           platform="$(sh installers/install.sh --print-platform)"
-          mkdir -p "$tmp/releases/v0.1.0" "$tmp/releases/nightly" "$tmp/cosign-base"
+          mkdir -p "$tmp/releases/$stable_tag" "$tmp/releases/nightly" "$tmp/cosign-base"
 
           cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
           cat >"$cosign_artifact" <<'EOF'
@@ -248,16 +265,16 @@ jobs:
             : >"$release_dir/SHA256SUMS.bundle"
           }
 
-          stable_artifact="agentmesh-v0.1.0-$platform.tar.gz"
+          stable_artifact="agentmesh-v$stable_version-$platform.tar.gz"
           nightly_artifact="agentmesh-nightly-$platform.tar.gz"
-          create_release "v0.1.0" "$stable_artifact"
+          create_release "$stable_tag" "$stable_artifact"
           create_release "nightly" "$nightly_artifact"
 
           export AGENTMESH_BASE_URL="file://$tmp/releases"
           export AGENTMESH_COSIGN_BASE_URL="file://$tmp/cosign-base"
           export AGENTMESH_COSIGN_SHA256="$cosign_sha"
 
-          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-stable" sh installers/install.sh --channel=stable --install-dir="$tmp/shell-stable"
+          PATH="/usr/bin:/bin" AGENTMESH_LATEST_VERSION="$stable_tag" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-stable" sh installers/install.sh --channel=stable --install-dir="$tmp/shell-stable"
           "$tmp/shell-stable/agentmesh" --version
           PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-nightly" sh installers/install.sh --channel=nightly --install-dir="$tmp/shell-nightly"
           "$tmp/shell-nightly/agentmesh" --version
