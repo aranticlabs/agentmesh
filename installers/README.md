@@ -65,20 +65,33 @@ irm https://agentmesh.sh/install.ps1 | iex        # Windows
 agentmesh upgrade
 ```
 
-## Uninstall
+## Start, stop, and uninstall
 
-From each initialized repository:
+To start AgentMesh again for an initialized repository:
 
 ```bash
-agentmesh uninstall --yes
+agentmesh start -y
 ```
 
-Then remove the binary:
+To stop AgentMesh for the current repository while keeping all repository state and AgentMesh installed on this computer:
 
-| Install method             | Command                                            |
-| -------------------------- | -------------------------------------------------- |
-| curl / `install.sh`        | `rm ~/.local/bin/agentmesh` (or your install path) |
-| PowerShell / `install.ps1` | Remove `agentmesh.exe` from your install directory |
+```bash
+agentmesh stop -y
+```
+
+To uninstall AgentMesh from the current repository and remove repository state:
+
+```bash
+agentmesh uninstall -y
+```
+
+This keeps runtime files such as `AGENTS.md` and `CLAUDE.md`.
+
+To uninstall AgentMesh from the current repository and this computer:
+
+```bash
+agentmesh uninstall -y --full
+```
 
 ## Developer checks
 

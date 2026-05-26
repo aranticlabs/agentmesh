@@ -196,10 +196,35 @@ stdout:
 stderr:
 
 
+## start dry-run
+exit: Some(0)
+stdout:
+    → Would refresh machine-local AgentMesh state for this repository
+    → Would install AgentMesh-owned hooks for detected runtimes
+    → Would keep agentmesh.lock, .ai/, and runtime files
+  No files were changed; AgentMesh sync was not started.
+
+stderr:
+
+
+## stop dry-run
+exit: Some(0)
+stdout:
+⚠ hook-ownership.json missing. Cannot determine which entries to remove.
+    → Would retain agentmesh.lock, .ai/, and runtime files
+    → Would keep AgentMesh installed on this computer
+  No files were changed; AgentMesh sync was not stopped.
+
+stderr:
+
+
 ## uninstall dry-run
 exit: Some(0)
 stdout:
 ⚠ hook-ownership.json missing. Cannot determine which entries to remove.
+    → Would remove agentmesh.lock, .ai/, and agentmesh.config.yaml
+    → Would keep runtime files such as AGENTS.md and CLAUDE.md
+  No files were changed; AgentMesh was not uninstalled.
 
 stderr:
 

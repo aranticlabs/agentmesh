@@ -6,6 +6,86 @@ AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentme
 COSIGN_VERSION="${AGENTMESH_COSIGN_VERSION:-v2.6.3}"
 COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*}"
 COSIGN_CERTIFICATE_OIDC_ISSUER="${AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
+SPINNER_PID=""
+
+spinner_enabled() {
+  [ -t 2 ] && [ "${AGENTMESH_NO_SPINNER:-}" != "1" ]
+}
+
+color_enabled() {
+  [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${AGENTMESH_NO_COLOR:-}" != "1" ]
+}
+
+paint() {
+  color="$1"
+  text="$2"
+  if color_enabled; then
+    case "$color" in
+      purple) printf '\033[95m%s\033[0m' "$text" ;;
+      green) printf '\033[32m%s\033[0m' "$text" ;;
+      red) printf '\033[31m%s\033[0m' "$text" ;;
+      *) printf '%s' "$text" ;;
+    esac
+  else
+    printf '%s' "$text"
+  fi
+}
+
+start_spinner() {
+  message="$1"
+  if spinner_enabled; then
+    (
+      while :; do
+        for frame in '⠋' '⠙' '⠚' '⠞' '⠖' '⠦' '⠴' '⠲' '⠳' '⠓'; do
+          printf '\r%s %s' "$(paint purple "$frame")" "$message" >&2
+          sleep 0.08
+        done
+      done
+    ) &
+    SPINNER_PID="$!"
+  else
+    printf '%s...\n' "$message" >&2
+  fi
+}
+
+stop_spinner() {
+  message="$1"
+  status="$2"
+  status_color="green"
+  if [ "$status" = "✗" ]; then
+    status_color="red"
+  fi
+  if [ -n "$SPINNER_PID" ]; then
+    kill "$SPINNER_PID" >/dev/null 2>&1 || true
+    wait "$SPINNER_PID" >/dev/null 2>&1 || true
+    SPINNER_PID=""
+    printf '\r\033[K%s %s\n' "$(paint "$status_color" "$status")" "$message" >&2
+  else
+    printf '%s %s\n' "$(paint "$status_color" "$status")" "$message" >&2
+  fi
+}
+
+stop_spinner_on_exit() {
+  if [ -n "$SPINNER_PID" ]; then
+    kill "$SPINNER_PID" >/dev/null 2>&1 || true
+    wait "$SPINNER_PID" >/dev/null 2>&1 || true
+    SPINNER_PID=""
+    printf '\r\033[K' >&2
+  fi
+}
+
+run_install_step() {
+  message="$1"
+  shift
+  start_spinner "$message"
+  if "$@"; then
+    stop_spinner "$message" "✓"
+  else
+    code="$?"
+    stop_spinner "$message" "✗"
+    return "$code"
+  fi
+}
 
 sha256_file() {
   file="$1"
@@ -148,7 +228,9 @@ verify_sha256() {
     echo "  actual:   $actual" >&2
     exit 1
   fi
-  echo "sha256 verified: $file"
+  if [ "${AGENTMESH_QUIET_VERIFY:-}" != "1" ]; then
+    echo "sha256 verified: $file"
+  fi
 }
 
 verify_sha256sums() {
@@ -313,7 +395,7 @@ print_success_banner() {
 ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║
 ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ██║ ╚═╝ ██║███████╗███████║██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
-                                                            By Arantic Digital
+                                                             by Arantic Digital
 
 AgentMesh is installed and ready.
 
@@ -380,20 +462,22 @@ install_archive() {
   esac
   tag="$(release_tag)"
   workdir="$(make_workdir)"
-  trap 'rm -rf "$workdir"' EXIT HUP INT TERM
+  trap 'stop_spinner_on_exit; rm -rf "$workdir"' EXIT HUP INT TERM
   archive="$workdir/$artifact"
   manifest="$workdir/SHA256SUMS"
   signature="$workdir/SHA256SUMS.sig"
   bundle="$workdir/SHA256SUMS.bundle"
 
-  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS" "$manifest"
-  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.sig" "$signature"
-  fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.bundle" "$bundle"
-  verify_manifest_signature "$manifest" "$signature" "$bundle"
-  fetch_url "$AGENTMESH_BASE_URL/$tag/$artifact" "$archive"
-  verify_sha256sums "$archive" "$manifest" "$artifact"
+  run_install_step "Resolving AgentMesh release $tag" fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS" "$manifest"
+  run_install_step "Downloading signature metadata" fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.sig" "$signature"
+  run_install_step "Downloading transparency bundle" fetch_url "$AGENTMESH_BASE_URL/$tag/SHA256SUMS.bundle" "$bundle"
+  run_install_step "Verifying signed checksum manifest" verify_manifest_signature "$manifest" "$signature" "$bundle"
+  run_install_step "Downloading AgentMesh for $platform" fetch_url "$AGENTMESH_BASE_URL/$tag/$artifact" "$archive"
+  AGENTMESH_QUIET_VERIFY=1
+  run_install_step "Verifying AgentMesh archive checksum" verify_sha256sums "$archive" "$manifest" "$artifact"
+  AGENTMESH_QUIET_VERIFY=0
 
-  safe_extract_archive "$archive" "$workdir/extract"
+  run_install_step "Extracting AgentMesh binary" safe_extract_archive "$archive" "$workdir/extract"
   binary="$workdir/extract/agentmesh/$binary_name"
   if [ ! -f "$binary" ] || [ -L "$binary" ]; then
     binary="$(find "$workdir/extract" -type f -name "$binary_name" -print | head -n 1)"
@@ -405,7 +489,7 @@ install_archive() {
 
   mkdir -p "$install_dir"
   chmod +x "$binary"
-  cp "$binary" "$install_dir/$binary_name"
+  run_install_step "Installing AgentMesh into $install_dir" cp "$binary" "$install_dir/$binary_name"
   print_success_banner "$install_dir/$binary_name" "$tag"
   case ":${PATH:-}:" in
     *":$install_dir:"*) ;;

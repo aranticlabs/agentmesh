@@ -127,11 +127,15 @@ enum Command {
     Restore(RestoreCommand),
     /// Acknowledge pending conflict resolution.
     Ack(AckCommand),
-    /// Start the watcher daemon.
+    /// Run the low-level watcher daemon.
     Watch(WatchCommand),
     /// Repin integrity to the current binary.
     Upgrade(UpgradeCommand),
-    /// Remove AgentMesh local wiring.
+    /// Start AgentMesh for this repository by restoring local hooks.
+    Start(StartCommand),
+    /// Stop AgentMesh for this repository and keep shared state.
+    Stop(StopCommand),
+    /// Remove AgentMesh-owned state from this repository.
     Uninstall(UninstallCommand),
     /// Recover from a textual lockfile merge conflict.
     ReconcileLock,
@@ -302,10 +306,30 @@ struct UpgradeCommand {
 }
 
 #[derive(Debug, Args)]
-struct UninstallCommand {
-    /// Also remove repository-visible AgentMesh state.
+struct StartCommand {
+    /// Print planned actions without writing.
     #[arg(long)]
-    purge: bool,
+    dry_run: bool,
+    /// Skip confirmation prompts.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct StopCommand {
+    /// Print planned actions without writing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip confirmation prompts.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct UninstallCommand {
+    /// Also remove AgentMesh from this computer.
+    #[arg(long)]
+    full: bool,
     /// Print planned actions without writing.
     #[arg(long)]
     dry_run: bool,
@@ -375,6 +399,8 @@ fn run(cli: Cli) -> Result<AgentmeshExitCode> {
         Some(Command::Ack(command)) => handle_ack(&context, command),
         Some(Command::Watch(command)) => handle_watch(&context, command),
         Some(Command::Upgrade(command)) => handle_upgrade(&context, command),
+        Some(Command::Start(command)) => handle_start(&context, command),
+        Some(Command::Stop(command)) => handle_stop(&context, command),
         Some(Command::Uninstall(command)) => handle_uninstall(&context, command),
         Some(Command::ReconcileLock) => handle_reconcile_lock(&context),
         Some(Command::Graph(command)) | Some(Command::Adapter(command)) => {
@@ -736,7 +762,7 @@ fn resolve_init_instruction_choice(
 
     if !std::io::stdin().is_terminal() {
         return Err(CliError::new(
-            "divergent AGENTS.md and CLAUDE.md require --canonical-instructions or --yes in non-interactive mode",
+            "divergent AGENTS.md and CLAUDE.md require --canonical-instructions or -y in non-interactive mode",
             AgentmeshExitCode::Cancelled,
         ));
     }
@@ -863,12 +889,36 @@ fn confirm_side_effect(yes: bool, action: &str) -> Result<()> {
 
     if !std::io::stdin().is_terminal() {
         return Err(CliError::new(
-            format!("{action} requires confirmation; rerun with --yes"),
+            format!("{action} requires confirmation; rerun with -y"),
             AgentmeshExitCode::Cancelled,
         ));
     }
 
     eprint!("Confirm {action}? [y/N] ");
+    confirm_stdin_response()
+}
+
+fn confirm_planned_side_effect(yes: bool, action: &str, plan: &[&str]) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+
+    if !std::io::stdin().is_terminal() {
+        return Err(CliError::new(
+            format!("{action} requires confirmation; rerun with -y"),
+            AgentmeshExitCode::Cancelled,
+        ));
+    }
+
+    eprintln!("This will:");
+    for item in plan {
+        eprintln!("  - {item}");
+    }
+    eprint!("Confirm {action}? [y/N] ");
+    confirm_stdin_response()
+}
+
+fn confirm_stdin_response() -> Result<()> {
     std::io::stderr().flush().map_err(CliError::from_io)?;
     let mut input = String::new();
     std::io::stdin()
@@ -1276,19 +1326,169 @@ fn handle_upgrade(context: &CliContext, command: UpgradeCommand) -> Result<Agent
     Ok(print_summary(context, summary.changed, "upgrade"))
 }
 
-fn handle_uninstall(context: &CliContext, command: UninstallCommand) -> Result<AgentmeshExitCode> {
+fn handle_start(context: &CliContext, command: StartCommand) -> Result<AgentmeshExitCode> {
+    context.touch();
+    if !context.repo_root.join("agentmesh.lock").is_file() {
+        return Err(CliError::new(
+            "start requires existing AgentMesh repository state; run `agentmesh init` first",
+            AgentmeshExitCode::Usage,
+        ));
+    }
+
+    if command.dry_run {
+        if !context.silent {
+            println!(
+                "    {} Would refresh machine-local AgentMesh state for this repository",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!(
+                "    {} Would install AgentMesh-owned hooks for detected runtimes",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!(
+                "    {} Would keep agentmesh.lock, .ai/, and runtime files",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!("  No files were changed; AgentMesh sync was not started.");
+        }
+        return Ok(AgentmeshExitCode::Success);
+    }
+
+    confirm_planned_side_effect(
+        command.yes,
+        "start AgentMesh for this repository",
+        &[
+            "refresh machine-local AgentMesh state for this repository",
+            "install AgentMesh-owned hooks for detected runtimes",
+            "keep agentmesh.lock, .ai/, and runtime files",
+        ],
+    )?;
+    let summary = agentmesh_core::init_with_adapter_registry(
+        &context.repo_root,
+        agentmesh_core::InitOptions {
+            dry_run: false,
+            skip_hooks: false,
+            canonical_instructions: None,
+        },
+        &CliAdapterRegistry,
+    )
+    .map_err(map_core_error)?;
+    install_detected_runtime_hooks(context)?;
+
+    if !context.silent {
+        println!(
+            "{} AgentMesh sync has started for this repository.",
+            check(context, true)
+        );
+        println!("  repository state changed: {}", summary.changed);
+    }
+    Ok(AgentmeshExitCode::Success)
+}
+
+fn handle_stop(context: &CliContext, command: StopCommand) -> Result<AgentmeshExitCode> {
     context.touch();
     if command.dry_run {
         uninstall_runtime_hooks(context, true)?;
+        if !context.silent {
+            println!(
+                "    {} Would retain agentmesh.lock, .ai/, and runtime files",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!(
+                "    {} Would keep AgentMesh installed on this computer",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!("  No files were changed; AgentMesh sync was not stopped.");
+        }
         return Ok(AgentmeshExitCode::Success);
     }
-    confirm_side_effect(command.yes, "uninstall AgentMesh local wiring")?;
+
+    confirm_side_effect(command.yes, "stop AgentMesh for this repository")?;
     uninstall_runtime_hooks(context, false)?;
     agentmesh_watcher::stop(&context.repo_root).map_err(map_watcher_error)?;
     let summary = agentmesh_core::uninstall(
         &context.repo_root,
         agentmesh_core::UninstallOptions {
-            prune_repository_state: command.purge,
+            prune_repository_state: false,
+        },
+    )
+    .map_err(map_core_error)?;
+
+    if !context.silent {
+        for removed in summary.removed_entries {
+            println!("    {} Removed {removed}", check(context, true));
+        }
+        println!(
+            "{} AgentMesh sync has stopped for this repository.",
+            check(context, true)
+        );
+        println!("  agentmesh.lock, .ai/, and runtime files are retained.");
+        println!("  AgentMesh remains installed on this computer.");
+    }
+    Ok(AgentmeshExitCode::Success)
+}
+
+fn handle_uninstall(context: &CliContext, command: UninstallCommand) -> Result<AgentmeshExitCode> {
+    context.touch();
+    if command.dry_run {
+        uninstall_runtime_hooks(context, true)?;
+        if !context.silent {
+            println!(
+                "    {} Would remove agentmesh.lock, .ai/, and agentmesh.config.yaml",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!(
+                "    {} Would keep runtime files such as AGENTS.md and CLAUDE.md",
+                context.paint(OutputStyle::Info, "→")
+            );
+            if command.full {
+                println!(
+                    "    {} Would remove AgentMesh from this computer",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            println!("  No files were changed; AgentMesh was not uninstalled.");
+        }
+        return Ok(AgentmeshExitCode::Success);
+    }
+    let action = if command.full {
+        "uninstall AgentMesh from this repository and this computer"
+    } else {
+        "uninstall AgentMesh from this repository"
+    };
+    if command.full {
+        confirm_planned_side_effect(
+            command.yes,
+            action,
+            &[
+                "remove AgentMesh-owned hooks for this repository",
+                "stop the watcher for this repository",
+                "remove machine-local AgentMesh state for this repository",
+                "delete agentmesh.lock, .ai/, and agentmesh.config.yaml",
+                "keep runtime files such as AGENTS.md and CLAUDE.md",
+                "remove AgentMesh from this computer",
+            ],
+        )?;
+    } else {
+        confirm_planned_side_effect(
+            command.yes,
+            action,
+            &[
+                "remove AgentMesh-owned hooks for this repository",
+                "stop the watcher for this repository",
+                "remove machine-local AgentMesh state for this repository",
+                "delete agentmesh.lock, .ai/, and agentmesh.config.yaml",
+                "keep runtime files such as AGENTS.md and CLAUDE.md",
+                "keep AgentMesh installed on this computer",
+            ],
+        )?;
+    }
+    uninstall_runtime_hooks(context, false)?;
+    agentmesh_watcher::stop(&context.repo_root).map_err(map_watcher_error)?;
+    let summary = agentmesh_core::uninstall(
+        &context.repo_root,
+        agentmesh_core::UninstallOptions {
+            prune_repository_state: true,
         },
     )
     .map_err(map_core_error)?;
@@ -1296,12 +1496,61 @@ fn handle_uninstall(context: &CliContext, command: UninstallCommand) -> Result<A
         for removed in summary.removed_entries {
             println!("    {} Removed {removed}", check(context, true));
         }
-        println!("{} AgentMesh local wiring removed.", check(context, true));
-        if !command.purge {
-            println!("  agentmesh.lock and canonical content are retained.");
-        }
+        println!(
+            "{} AgentMesh has been uninstalled from this repository.",
+            check(context, true)
+        );
+        println!("  Runtime files such as AGENTS.md and CLAUDE.md are retained.");
+    }
+    if command.full {
+        remove_current_binary(context)?;
+    } else if !context.silent {
+        println!(
+            "  AgentMesh remains installed on this computer. Run `agentmesh uninstall --full` to remove it."
+        );
     }
     Ok(AgentmeshExitCode::Success)
+}
+
+fn remove_current_binary(context: &CliContext) -> Result<()> {
+    let binary_path = std::env::current_exe().map_err(CliError::from_io)?;
+    #[cfg(target_os = "windows")]
+    {
+        ProcessCommand::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Start-Sleep -Seconds 1; Remove-Item -LiteralPath $args[0] -Force",
+                "--",
+            ])
+            .arg(&binary_path)
+            .spawn()
+            .map_err(CliError::from_io)?;
+        if !context.silent {
+            println!(
+                "{} AgentMesh uninstall from this computer has been scheduled.",
+                check(context, true)
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    match fs::remove_file(&binary_path) {
+        Ok(()) => {
+            if !context.silent {
+                println!(
+                    "{} AgentMesh has been uninstalled from this computer.",
+                    check(context, true)
+                );
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CliError::from_io(error)),
+    }
 }
 
 fn handle_reconcile_lock(context: &CliContext) -> Result<AgentmeshExitCode> {
@@ -2212,9 +2461,9 @@ fn print_doctor(context: &CliContext, snapshot: &RepoSnapshot) {
     for entity_id in &snapshot.lockfile.pending_conflict_ids {
         println!("    {entity_id}");
         println!(
-            "      restore: agentmesh restore {entity_id} --from <runtime> --at <timestamp> --yes"
+            "      restore: agentmesh restore {entity_id} --from <runtime> --at <timestamp> -y"
         );
-        println!("      acknowledge: agentmesh ack {entity_id} --yes");
+        println!("      acknowledge: agentmesh ack {entity_id} -y");
     }
     if !snapshot.core_findings.is_empty() {
         println!();

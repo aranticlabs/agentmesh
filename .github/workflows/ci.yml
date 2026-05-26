@@ -46,6 +46,23 @@ jobs:
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintPlatform
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+      - name: Verify Windows installer banner rendering
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintBanner
+          if ($LASTEXITCODE -ne 0) {
+            throw "install.ps1 -PrintBanner failed"
+          }
+          if (($output -join "`n") -notmatch "AgentMesh is installed and ready\.") {
+            throw "installer banner is missing the install confirmation"
+          }
+          if (($output -join "`n") -notmatch "by Arantic Digital") {
+            throw "installer banner is missing the brand credit"
+          }
+          if (($output -join "`n") -match "â") {
+            throw "installer banner appears mojibaked"
+          }
       - name: Verify Windows installer fake release flow
         shell: powershell
         run: |
@@ -252,7 +269,7 @@ jobs:
           "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" init --yes --skip-hooks --silent
           "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" sync --silent
           test -f "$e2e_repo/.ai/skills/demo/SKILL.md"
-          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall --yes --purge --silent
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall -y --silent
           test ! -e "$e2e_repo/agentmesh.lock"
       - name: Verify installer signature paths
         run: |
