@@ -75,8 +75,13 @@ jobs:
           }
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          $stableTag = gh api repos/aranticlabs/agentmesh/releases/latest --jq .tag_name
-          $stableVersion = $stableTag.TrimStart("v")
+          $stableUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+          $stableMatch = [regex]::Match($stableUrl, '/download/(v[0-9]+\.[0-9]+\.[0-9]+)/agentmesh-v([0-9]+\.[0-9]+\.[0-9]+)-')
+          if (-not $stableMatch.Success) {
+            throw "failed to parse stable installer URL: $stableUrl"
+          }
+          $stableTag = $stableMatch.Groups[1].Value
+          $stableVersion = $stableMatch.Groups[2].Value
           $release = Join-Path $tmp "releases\$stableTag"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
@@ -207,9 +212,14 @@ jobs:
             fi
           }
 
-          stable_tag="$(gh api repos/aranticlabs/agentmesh/releases/latest --jq .tag_name)"
-          stable_version="${stable_tag#v}"
-          stable="$(AGENTMESH_LATEST_VERSION="$stable_tag" sh installers/install.sh --print-url --channel=stable)"
+          stable="$(sh installers/install.sh --print-url --channel=stable)"
+          stable_artifact_url="$(printf '%s\n' "$stable" | sed -n 's/^artifact_url=//p')"
+          stable_tag="$(printf '%s\n' "$stable_artifact_url" | sed -n 's#.*/download/\\(v[0-9][0-9.]*\\)/agentmesh-v[0-9][0-9.]*-.*#\\1#p')"
+          stable_version="$(printf '%s\n' "$stable_artifact_url" | sed -n 's#.*/download/v[0-9][0-9.]*/agentmesh-v\\([0-9][0-9.]*\\)-.*#\\1#p')"
+          if [ -z "$stable_tag" ] || [ -z "$stable_version" ]; then
+            echo "failed to parse stable installer URL: $stable_artifact_url" >&2
+            exit 1
+          fi
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
           case "$stable" in */"$stable_tag"/agentmesh-v"$stable_version"-*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
