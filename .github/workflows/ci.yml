@@ -252,7 +252,7 @@ jobs:
           "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" init --yes --skip-hooks --silent
           "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" sync --silent
           test -f "$e2e_repo/.ai/skills/demo/SKILL.md"
-          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall --yes --purge --silent
+          "$tmp/shell-stable/agentmesh" --cwd "$e2e_repo" uninstall -y --silent
           test ! -e "$e2e_repo/agentmesh.lock"
       - name: Verify installer signature paths
         run: |
