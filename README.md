@@ -87,36 +87,47 @@ the watcher daemon and manual `agentmesh sync` until then.
 
 Full walkthrough: [agentmesh.sh/quickstart](https://agentmesh.sh/quickstart)
 
-## Uninstall
+## Start, Stop, And Uninstall
 
-**From a project**, run from the repository root:
+To start AgentMesh again for an initialized repository:
 
 ```bash
-agentmesh uninstall --yes
+agentmesh start -y
+```
+
+This refreshes machine-local AgentMesh state and installs AgentMesh-owned hooks for detected runtimes. It keeps `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` intact.
+
+To stop AgentMesh for the current repository while keeping all repository state and AgentMesh installed on this computer:
+
+```bash
+agentmesh stop -y
 ```
 
 This stops the watcher, removes AgentMesh-owned hooks, and clears machine-local cache state. `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` are left intact so you can re-run `agentmesh init` later.
 
-To also remove repository-visible AgentMesh state:
+To uninstall AgentMesh from the current repository:
 
 ```bash
-agentmesh uninstall --yes --purge
+agentmesh uninstall -y
 ```
 
-This deletes `agentmesh.lock`, `.ai/`, and `agentmesh.config.yaml`. Emitted runtime files are not removed automatically; delete or edit those manually if you no longer want them.
+This deletes only AgentMesh-owned repository state: `agentmesh.lock`, `.ai/`, and `agentmesh.config.yaml`. AgentMesh never deletes runtime files such as `AGENTS.md` or `CLAUDE.md`.
 
-Preview planned changes without writing:
+To uninstall AgentMesh from the current repository and this computer:
 
 ```bash
+agentmesh uninstall -y --full
+```
+
+This also removes the `agentmesh` command from this computer. Runtime files such as `AGENTS.md` and `CLAUDE.md` are still retained.
+
+Preview planned stop or uninstall changes without writing:
+
+```bash
+agentmesh start --dry-run
+agentmesh stop --dry-run
 agentmesh uninstall --dry-run
 ```
-
-**Remove the binary** after uninstalling from each project:
-
-| Install method             | Command                                            |
-| -------------------------- | -------------------------------------------------- |
-| curl / `install.sh`        | `rm ~/.local/bin/agentmesh` (or your install path) |
-| PowerShell / `install.ps1` | Remove `agentmesh.exe` from your install directory |
 
 More detail: [agentmesh.sh/docs/installation/curl](https://agentmesh.sh/docs/installation/curl).
 

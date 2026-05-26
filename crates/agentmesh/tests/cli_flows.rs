@@ -18,7 +18,11 @@ fn entity_id(value: &str) -> agentmesh_core::EntityId {
 }
 
 fn run_agentmesh(repo: &Path, cache: &Path, args: &[&str]) -> Output {
-    match Command::new(agentmesh_bin())
+    run_agentmesh_binary(&agentmesh_bin(), repo, cache, args)
+}
+
+fn run_agentmesh_binary(binary: &Path, repo: &Path, cache: &Path, args: &[&str]) -> Output {
+    match Command::new(binary)
         .arg("--cwd")
         .arg(repo)
         .env("AGENTMESH_CACHE_DIR", cache)
@@ -375,7 +379,7 @@ fn representative_command_outputs_are_snapshotted() {
         ("scan", vec!["--no-color", "scan"]),
         (
             "init dry-run",
-            vec!["--no-color", "init", "--dry-run", "--skip-hooks", "--yes"],
+            vec!["--no-color", "init", "--dry-run", "--skip-hooks", "-y"],
         ),
         (
             "install runtime dry-run",
@@ -393,6 +397,8 @@ fn representative_command_outputs_are_snapshotted() {
             "upgrade dry-run",
             vec!["--no-color", "upgrade", "--dry-run"],
         ),
+        ("start dry-run", vec!["--no-color", "start", "--dry-run"]),
+        ("stop dry-run", vec!["--no-color", "stop", "--dry-run"]),
         (
             "uninstall dry-run",
             vec!["--no-color", "uninstall", "--dry-run"],
@@ -433,7 +439,7 @@ fn representative_command_outputs_are_snapshotted() {
     let ack = run_agentmesh(
         &conflict_repo,
         &conflict_cache,
-        &["--no-color", "ack", "--yes"],
+        &["--no-color", "ack", "-y"],
     );
     push_command_output(
         &mut surface,
@@ -456,7 +462,7 @@ fn representative_command_outputs_are_snapshotted() {
             "watch",
             "--register-as-service",
             "--persistent",
-            "--yes",
+            "-y",
         ],
     );
     push_command_output(
@@ -546,7 +552,7 @@ fn init_projects_all_entities_and_installs_detected_runtime_hooks() {
         &[
             "--silent",
             "init",
-            "--yes",
+            "-y",
             "--canonical-instructions",
             "CLAUDE.md",
         ],
@@ -613,11 +619,7 @@ fn init_yes_accepts_divergent_root_instructions_non_interactively() {
     write(repo.join("AGENTS.md"), "# Agents instructions\n");
     write(repo.join("CLAUDE.md"), "# Claude instructions\n");
 
-    let init = run_agentmesh(
-        &repo,
-        &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
-    );
+    let init = run_agentmesh(&repo, &cache, &["--silent", "init", "-y", "--skip-hooks"]);
 
     assert_success(&init);
     assert_eq!(read(repo.join("AGENTS.md")), "# Agents instructions\n");
@@ -672,7 +674,7 @@ fn claude_hook_trigger_imports_new_skill_and_drains_pending_record() {
     assert_success(&run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
     write(
         repo.join(".claude/skills/hot-path/SKILL.md"),
@@ -712,7 +714,7 @@ fn diff_reports_drift_without_writing_and_apply_fans_out() {
     assert_success(&run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
     write(
         repo.join(".claude/skills/diffable/SKILL.md"),
@@ -752,7 +754,7 @@ fn apply_requires_a_reviewed_diff_state() {
     assert_success(&run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
     write(
         repo.join(".claude/skills/apply/SKILL.md"),
@@ -789,7 +791,7 @@ fn diff_exits_zero_when_clean_and_does_not_enqueue_work() {
 }
 
 #[test]
-fn install_and_uninstall_are_machine_local_and_surgical() {
+fn install_stop_and_start_are_machine_local_and_surgical() {
     let temp = match tempfile::tempdir() {
         Ok(temp) => temp,
         Err(error) => panic!("tempdir should be available: {error}"),
@@ -810,13 +812,13 @@ fn install_and_uninstall_are_machine_local_and_surgical() {
     let claude_install = run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "install", "--runtime", "claude", "--yes"],
+        &["--silent", "install", "--runtime", "claude", "-y"],
     );
     assert!(claude_install.status.success());
     let codex_install = run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "install", "--runtime", "codex", "--yes"],
+        &["--silent", "install", "--runtime", "codex", "-y"],
     );
     assert!(codex_install.status.success());
 
@@ -835,8 +837,12 @@ fn install_and_uninstall_are_machine_local_and_surgical() {
     assert!(codex_overlay.contains("codex-hook"));
     assert_eq!(read(repo.join("agentmesh.lock")), original_lockfile);
 
-    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "uninstall", "--yes"]);
-    assert!(uninstall.status.success());
+    let stop = run_agentmesh(&repo, &cache, &["stop", "-y"]);
+    assert!(stop.status.success());
+    assert!(
+        String::from_utf8_lossy(&stop.stdout)
+            .contains("AgentMesh sync has stopped for this repository.")
+    );
 
     let claude_overlay = read(repo.join(".claude/settings.local.json"));
     let codex_overlay = read(repo.join(".codex/hooks.json"));
@@ -846,6 +852,28 @@ fn install_and_uninstall_are_machine_local_and_surgical() {
     assert!(!codex_overlay.contains("codex-hook"));
     assert!(!repo_cache_dir.exists());
     assert_eq!(read(repo.join("agentmesh.lock")), original_lockfile);
+
+    let start = run_agentmesh(&repo, &cache, &["start", "-y"]);
+    assert!(start.status.success());
+    assert!(
+        String::from_utf8_lossy(&start.stdout)
+            .contains("AgentMesh sync has started for this repository.")
+    );
+
+    let ownership_path = match find_named_file(&cache, "hook-ownership.json") {
+        Some(path) => path,
+        None => panic!("hook ownership should be recorded after start"),
+    };
+    let Some(repo_cache_dir) = ownership_path.parent() else {
+        panic!("hook ownership should have a parent directory after start");
+    };
+    let claude_overlay = read(repo.join(".claude/settings.local.json"));
+    let codex_overlay = read(repo.join(".codex/hooks.json"));
+    assert!(claude_overlay.contains("echo user"));
+    assert!(claude_overlay.contains("claude-hook"));
+    assert!(codex_overlay.contains("echo user"));
+    assert!(codex_overlay.contains("codex-hook"));
+    assert!(repo_cache_dir.exists());
 }
 
 #[test]
@@ -869,6 +897,13 @@ fn side_effect_commands_require_confirmation_in_non_tty() {
     let uninstall = run_agentmesh(&repo, &cache, &["uninstall"]);
     assert_exit_code(&uninstall, 10);
 
+    write(repo.join("agentmesh.lock"), "version: 1\nschema: 1\n");
+    let start = run_agentmesh(&repo, &cache, &["start"]);
+    assert_exit_code(&start, 10);
+
+    let stop = run_agentmesh(&repo, &cache, &["stop"]);
+    assert_exit_code(&stop, 10);
+
     write(
         repo.join("agentmesh.lock"),
         r#"version: 1
@@ -888,42 +923,84 @@ entities:
 }
 
 #[test]
-fn uninstall_purge_removes_repository_state_after_cleaning_hooks() {
+fn uninstall_removes_repository_state_after_cleaning_hooks() {
     let temp = match tempfile::tempdir() {
         Ok(temp) => temp,
         Err(error) => panic!("tempdir should be available: {error}"),
     };
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
+    write(repo.join("AGENTS.md"), "# Runtime agents\n");
+    write(repo.join("CLAUDE.md"), "# Runtime claude\n");
     write(
-        repo.join(".claude/skills/purge/SKILL.md"),
-        "---\nname: purge\n---\nPurge skill.\n",
+        repo.join(".claude/skills/remove/SKILL.md"),
+        "---\nname: remove\n---\nRemove skill.\n",
     );
     write(repo.join(".codex/.keep"), "");
-    assert_success(&run_agentmesh(
-        &repo,
-        &cache,
-        &["--silent", "init", "--yes"],
-    ));
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "init", "-y"]));
     assert!(repo.join(".ai").exists());
     assert!(repo.join("agentmesh.lock").exists());
+    let agents_contents = read(repo.join("AGENTS.md"));
+    let claude_contents = read(repo.join("CLAUDE.md"));
 
-    let uninstall = run_agentmesh(
-        &repo,
-        &cache,
-        &["--silent", "uninstall", "--yes", "--purge"],
-    );
+    let uninstall = run_agentmesh(&repo, &cache, &["uninstall", "-y"]);
 
     assert_success(&uninstall);
+    assert!(
+        String::from_utf8_lossy(&uninstall.stdout)
+            .contains("AgentMesh has been uninstalled from this repository.")
+    );
     assert!(!repo.join(".ai").exists());
     assert!(!repo.join("agentmesh.lock").exists());
     assert!(!repo.join("agentmesh.config.yaml").exists());
+    assert_eq!(read(repo.join("AGENTS.md")), agents_contents);
+    assert_eq!(read(repo.join("CLAUDE.md")), claude_contents);
     if repo.join(".claude/settings.local.json").exists() {
         assert!(!read(repo.join(".claude/settings.local.json")).contains("claude-hook"));
     }
     if repo.join(".codex/hooks.json").exists() {
         assert!(!read(repo.join(".codex/hooks.json")).contains("codex-hook"));
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn uninstall_full_removes_copied_binary() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let binary = temp.path().join("agentmesh-copy");
+    write(repo.join("AGENTS.md"), "# Runtime agents\n");
+    write(repo.join("CLAUDE.md"), "# Runtime claude\n");
+    if let Err(error) = fs::copy(agentmesh_bin(), &binary) {
+        panic!("agentmesh test binary should copy: {error}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = match fs::metadata(&binary) {
+            Ok(metadata) => metadata.permissions(),
+            Err(error) => panic!("copied binary metadata should be readable: {error}"),
+        };
+        permissions.set_mode(0o755);
+        if let Err(error) = fs::set_permissions(&binary, permissions) {
+            panic!("copied binary should be executable: {error}");
+        }
+    }
+
+    let uninstall = run_agentmesh_binary(&binary, &repo, &cache, &["uninstall", "-y", "--full"]);
+
+    assert_success(&uninstall);
+    let stdout = String::from_utf8_lossy(&uninstall.stdout);
+    assert!(stdout.contains("AgentMesh has been uninstalled from this repository."));
+    assert!(stdout.contains("AgentMesh has been uninstalled from this computer."));
+    assert!(!binary.exists());
+    assert_eq!(read(repo.join("AGENTS.md")), "# Runtime agents\n");
+    assert_eq!(read(repo.join("CLAUDE.md")), "# Runtime claude\n");
 }
 
 #[test]
@@ -956,7 +1033,7 @@ entities:
 "#,
     );
 
-    let ack = run_agentmesh(&repo, &cache, &["--silent", "ack", "--yes"]);
+    let ack = run_agentmesh(&repo, &cache, &["--silent", "ack", "-y"]);
 
     assert_success(&ack);
     let lockfile = read(repo.join("agentmesh.lock"));
@@ -995,7 +1072,7 @@ entities:
 "#,
     );
 
-    let ack = run_agentmesh(&repo, &cache, &["--silent", "ack", "skill:first", "--yes"]);
+    let ack = run_agentmesh(&repo, &cache, &["--silent", "ack", "skill:first", "-y"]);
 
     assert_success(&ack);
     let lockfile = read(repo.join("agentmesh.lock"));
@@ -1128,7 +1205,7 @@ entities:
             "claude",
             "--at",
             "unix-2",
-            "--yes",
+            "-y",
         ],
     );
 
@@ -1150,7 +1227,7 @@ fn git_pre_commit_install_is_additive_and_executable() {
     let install = run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "install", "--git-pre-commit", "--yes"],
+        &["--silent", "install", "--git-pre-commit", "-y"],
     );
 
     assert_success(&install);
@@ -1184,7 +1261,7 @@ fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
     let install = run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "install", "--git-pre-commit", "--yes"],
+        &["--silent", "install", "--git-pre-commit", "-y"],
     );
 
     assert_success(&install);
@@ -1201,7 +1278,7 @@ fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
     };
     assert!(ownership.contains("git-pre-commit"));
 
-    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "uninstall", "--yes"]);
+    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]);
 
     assert_success(&uninstall);
     assert_eq!(read(&hook), original);
@@ -1221,7 +1298,7 @@ fn git_pre_commit_install_refuses_known_framework_hooks_without_force() {
         "#!/bin/sh\n# File generated by pre-commit: https://pre-commit.com\n",
     );
 
-    let install = run_agentmesh(&repo, &cache, &["install", "--git-pre-commit", "--yes"]);
+    let install = run_agentmesh(&repo, &cache, &["install", "--git-pre-commit", "-y"]);
 
     assert_exit_code(&install, 64);
     assert!(!read(repo.join(".git/hooks/pre-commit")).contains("AgentMesh"));
@@ -1299,11 +1376,7 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         "---\nname: upgrade\n---\nUpgrade hook.\n",
     );
     write(repo.join(".codex/.keep"), "");
-    assert_success(&run_agentmesh(
-        &repo,
-        &cache,
-        &["--silent", "init", "--yes"],
-    ));
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "init", "-y"]));
     let binary = agentmesh_bin().display().to_string();
     let stale_binary = temp.path().join("old-agentmesh").display().to_string();
     let escaped_binary = json_string_fragment(&binary);
@@ -1319,7 +1392,7 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         assert!(read(&overlay).contains(&escaped_stale_binary));
     }
 
-    let upgrade = run_agentmesh(&repo, &cache, &["--silent", "upgrade", "--yes"]);
+    let upgrade = run_agentmesh(&repo, &cache, &["--silent", "upgrade", "-y"]);
 
     assert_success(&upgrade);
     for overlay in [
@@ -1346,7 +1419,7 @@ fn uninstall_stops_a_running_watcher() {
         &repo,
         &cache,
         &home,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
 
     let mut watcher = spawn_agentmesh_with_home(
@@ -1360,7 +1433,7 @@ fn uninstall_stops_a_running_watcher() {
     });
     assert!(started, "watcher should write a pid record");
 
-    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "uninstall", "--yes"]);
+    let uninstall = run_agentmesh(&repo, &cache, &["--silent", "uninstall", "-y"]);
     assert_success(&uninstall);
 
     let exited = wait_until(Duration::from_secs(5), || match watcher.try_wait() {
@@ -1373,7 +1446,7 @@ fn uninstall_stops_a_running_watcher() {
         let _ = watcher.wait();
     }
 
-    assert!(exited, "uninstall should stop the running watcher");
+    assert!(exited, "stop should stop the running watcher");
     assert!(find_named_file(&cache, "watcher.pid").is_none());
 }
 
@@ -1397,7 +1470,7 @@ fn service_registration_writes_platform_definition() {
             "watch",
             "--register-as-service",
             "--persistent",
-            "--yes",
+            "-y",
         ],
     );
 
@@ -1425,8 +1498,7 @@ fn service_registration_writes_platform_definition() {
     assert!(contents.contains("--foreground"));
     assert!(contents.contains("--persistent"));
 
-    let uninstall =
-        run_agentmesh_with_home(&repo, &cache, &home, &["--silent", "uninstall", "--yes"]);
+    let uninstall = run_agentmesh_with_home(&repo, &cache, &home, &["--silent", "stop", "-y"]);
 
     assert_success(&uninstall);
     assert!(!service.exists());
@@ -1451,7 +1523,7 @@ fn foreground_watcher_drains_canonical_edit_through_core_sync() {
         &repo,
         &cache,
         &home,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
 
     let mut watcher = spawn_agentmesh_with_home(
@@ -1503,14 +1575,14 @@ fn explicit_cache_dir_is_used_for_core_cli_and_watcher_state() {
         &repo,
         &cache,
         &home,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     );
     assert_success(&init);
     let watch = run_agentmesh_with_home(
         &repo,
         &cache,
         &home,
-        &["--silent", "watch", "--register-as-service", "--yes"],
+        &["--silent", "watch", "--register-as-service", "-y"],
     );
     assert_success(&watch);
 
@@ -1536,7 +1608,7 @@ fn status_and_doctor_report_integrity_mismatch_against_running_binary() {
     assert_success(&run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
     let pin_path = match find_named_file(&cache, "integrity.json") {
         Some(path) => path,
@@ -1610,7 +1682,7 @@ fn sync_check_exit_codes_distinguish_generic_drift_and_strict_conflict() {
     assert_success(&run_agentmesh(
         &repo,
         &cache,
-        &["--silent", "init", "--yes", "--skip-hooks"],
+        &["--silent", "init", "-y", "--skip-hooks"],
     ));
     write(
         repo.join(".claude/skills/check/SKILL.md"),

@@ -10,12 +10,88 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 $AgentMeshVersion = if ($env:AGENTMESH_VERSION) { $env:AGENTMESH_VERSION } else { "0.1.0" }
 $BaseUrl = if ($env:AGENTMESH_BASE_URL) { $env:AGENTMESH_BASE_URL } else { "https://github.com/aranticlabs/agentmesh/releases/download" }
 $CosignVersion = if ($env:AGENTMESH_COSIGN_VERSION) { $env:AGENTMESH_COSIGN_VERSION } else { "v2.6.3" }
 $CosignIdentity = if ($env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP) { $env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP } else { "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*" }
 $CosignIssuer = if ($env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER) { $env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }
+$script:SpinnerState = $null
+$script:SpinnerThread = $null
+
+function Test-AgentMeshColor {
+    return -not [Console]::IsErrorRedirected -and -not $env:NO_COLOR -and $env:AGENTMESH_NO_COLOR -ne "1"
+}
+
+function Write-AgentMeshColoredError {
+    param([string]$Text, [ConsoleColor]$Color)
+    if (Test-AgentMeshColor) {
+        $previous = [Console]::ForegroundColor
+        [Console]::ForegroundColor = $Color
+        [Console]::Error.Write($Text)
+        [Console]::ForegroundColor = $previous
+    } else {
+        [Console]::Error.Write($Text)
+    }
+}
+
+function Start-AgentMeshSpinner {
+    param([string]$Message)
+    if ([Console]::IsErrorRedirected -or $env:AGENTMESH_NO_SPINNER -eq "1") {
+        Write-Host "$Message..."
+        return
+    }
+
+    $script:SpinnerState = [hashtable]::Synchronized(@{
+        Active = $true
+        Message = $Message
+    })
+    $script:SpinnerThread = [System.Threading.Thread]::new([System.Threading.ParameterizedThreadStart] {
+        param($State)
+        $frames = @("⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓")
+        $index = 0
+        while ($State.Active) {
+            [Console]::Error.Write("`r")
+            Write-AgentMeshColoredError -Text $frames[$index % $frames.Count] -Color Magenta
+            [Console]::Error.Write(" $($State.Message)")
+            [System.Threading.Thread]::Sleep(80)
+            $index++
+        }
+    })
+    $script:SpinnerThread.IsBackground = $true
+    $script:SpinnerThread.Start($script:SpinnerState)
+}
+
+function Stop-AgentMeshSpinner {
+    param([string]$Message, [string]$Status)
+    $color = if ($Status -eq "✗") { [ConsoleColor]::Red } else { [ConsoleColor]::Green }
+    if ($script:SpinnerState -and $script:SpinnerThread) {
+        $script:SpinnerState.Active = $false
+        $script:SpinnerThread.Join()
+        [Console]::Error.Write("`r")
+        [Console]::Error.Write(" " * ([Math]::Max(80, $Message.Length + 8)))
+        [Console]::Error.Write("`r")
+        Write-AgentMeshColoredError -Text $Status -Color $color
+        [Console]::Error.WriteLine(" $Message")
+        $script:SpinnerState = $null
+        $script:SpinnerThread = $null
+    } else {
+        Write-Host "$Status $Message"
+    }
+}
+
+function Invoke-InstallStep {
+    param([string]$Message, [scriptblock]$Action)
+    Start-AgentMeshSpinner -Message $Message
+    try {
+        & $Action
+        Stop-AgentMeshSpinner -Message $Message -Status "✓"
+    } catch {
+        Stop-AgentMeshSpinner -Message $Message -Status "✗"
+        throw
+    }
+}
 
 function Get-AgentMeshPlatform {
     if ($env:OS -ne "Windows_NT") {
@@ -143,7 +219,7 @@ function Test-Sha256SumsSignature {
         --bundle $Bundle `
         --certificate-identity-regexp $CosignIdentity `
         --certificate-oidc-issuer $CosignIssuer `
-        $Manifest
+        $Manifest | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "SHA256SUMS signature verification failed"
     }
@@ -158,7 +234,7 @@ function Show-InstallSuccess {
     Write-Host "██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║"
     Write-Host "██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ██║ ╚═╝ ██║███████╗███████║██║  ██║"
     Write-Host "╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝"
-    Write-Host "                                                            By Arantic Digital"
+    Write-Host "                                                             by Arantic Digital"
     Write-Host ""
     Write-Host "AgentMesh is installed and ready."
     Write-Host ""
@@ -192,28 +268,45 @@ function Install-AgentMesh {
         $bundle = Join-Path $tmp "SHA256SUMS.bundle"
         $releaseBase = Join-Url $BaseUrl $tag
 
-        Save-Url -Url (Join-Url $releaseBase $artifact) -Path $archive
-        Save-Url -Url (Join-Url $releaseBase "SHA256SUMS") -Path $manifest
-        Save-Url -Url (Join-Url $releaseBase "SHA256SUMS.sig") -Path $signature
-        Save-Url -Url (Join-Url $releaseBase "SHA256SUMS.bundle") -Path $bundle
-
-        Test-Sha256SumsSignature -Manifest $manifest -Signature $signature -Bundle $bundle
-        $expected = Get-ManifestHash -ManifestPath $manifest -ArtifactName $artifact
-        $actual = Get-Sha256 $archive
-        if ($actual -ne $expected) {
-            throw "sha256 mismatch for $artifact"
+        Invoke-InstallStep -Message "Resolving AgentMesh release $tag" -Action {
+            Save-Url -Url (Join-Url $releaseBase "SHA256SUMS") -Path $manifest
         }
-
+        Invoke-InstallStep -Message "Downloading signature metadata" -Action {
+            Save-Url -Url (Join-Url $releaseBase "SHA256SUMS.sig") -Path $signature
+        }
+        Invoke-InstallStep -Message "Downloading transparency bundle" -Action {
+            Save-Url -Url (Join-Url $releaseBase "SHA256SUMS.bundle") -Path $bundle
+        }
+        Invoke-InstallStep -Message "Verifying signed checksum manifest" -Action {
+            Test-Sha256SumsSignature -Manifest $manifest -Signature $signature -Bundle $bundle
+        }
+        Invoke-InstallStep -Message "Downloading AgentMesh for $platform" -Action {
+            Save-Url -Url (Join-Url $releaseBase $artifact) -Path $archive
+        }
+        Invoke-InstallStep -Message "Verifying AgentMesh archive checksum" -Action {
+            $expected = Get-ManifestHash -ManifestPath $manifest -ArtifactName $artifact
+            $actual = Get-Sha256 $archive
+            if ($actual -ne $expected) {
+                throw "sha256 mismatch for $artifact"
+            }
+        }
         $extract = Join-Path $tmp "extract"
         New-Item -ItemType Directory -Path $extract -Force | Out-Null
-        tar -xzf $archive -C $extract
+        Invoke-InstallStep -Message "Extracting AgentMesh binary" -Action {
+            tar -xzf $archive -C $extract
+            if ($LASTEXITCODE -ne 0) {
+                throw "failed to extract $artifact"
+            }
+        }
         $binary = Get-ChildItem -Path $extract -Filter "agentmesh.exe" -Recurse | Select-Object -First 1
         if (-not $binary) {
             throw "archive did not contain agentmesh.exe"
         }
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         $targetBinary = Join-Path $targetDir "agentmesh.exe"
-        Copy-Item -LiteralPath $binary.FullName -Destination $targetBinary -Force
+        Invoke-InstallStep -Message "Installing AgentMesh into $targetDir" -Action {
+            Copy-Item -LiteralPath $binary.FullName -Destination $targetBinary -Force
+        }
         Show-InstallSuccess -BinaryPath $targetBinary -Tag $tag
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
