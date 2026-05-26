@@ -74,6 +74,12 @@ release:
 	fi
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
+	manifest_version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
+	if [ "$$manifest_version" != "$(v)" ]; then \
+		echo "$(RED)[ERROR]$(NC) Cargo.toml workspace version is $$manifest_version, expected $(v)."; \
+		echo "        Bump the workspace version before tagging this release."; \
+		exit 1; \
+	fi; \
 	if [ "$$branch" != "main" ]; then \
 		echo "$(RED)[ERROR]$(NC) Releases must be tagged from main (currently on $$branch)"; \
 		exit 1; \
@@ -122,6 +128,12 @@ retag:
 	fi
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
+	manifest_version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
+	if [ "$$manifest_version" != "$(v)" ]; then \
+		echo "$(RED)[ERROR]$(NC) Cargo.toml workspace version is $$manifest_version, expected $(v)."; \
+		echo "        Bump the workspace version before retagging this release."; \
+		exit 1; \
+	fi; \
 	echo "$(BLUE)[INFO]$(NC) Pushing $$branch to origin..."; \
 	git push origin "$$branch"; \
 	echo "$(BLUE)[INFO]$(NC) Retagging $$tag..."; \
