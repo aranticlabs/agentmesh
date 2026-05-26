@@ -46,6 +46,23 @@ jobs:
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintPlatform
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+      - name: Verify Windows installer banner rendering
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintBanner
+          if ($LASTEXITCODE -ne 0) {
+            throw "install.ps1 -PrintBanner failed"
+          }
+          if (($output -join "`n") -notmatch "AgentMesh is installed and ready\.") {
+            throw "installer banner is missing the install confirmation"
+          }
+          if (($output -join "`n") -notmatch "by Arantic Digital") {
+            throw "installer banner is missing the brand credit"
+          }
+          if (($output -join "`n") -match "â") {
+            throw "installer banner appears mojibaked"
+          }
       - name: Verify Windows installer fake release flow
         shell: powershell
         run: |

@@ -4,6 +4,7 @@ param(
     [string]$InstallDir = $env:AGENTMESH_INSTALL_DIR,
     [switch]$PrintPlatform,
     [switch]$PrintUrl,
+    [switch]$PrintBanner,
     [switch]$Smoke,
     [switch]$UpgradeHelp,
     [switch]$Install
@@ -360,6 +361,10 @@ if ($PrintPlatform) {
 }
 if ($PrintUrl) {
     Write-Output (Get-ArtifactUrl)
+    exit 0
+}
+if ($PrintBanner) {
+    Show-InstallSuccess -BinaryPath "<agentmesh-binary>" -Tag (Get-ReleaseTag)
     exit 0
 }
 if ($Smoke) {
