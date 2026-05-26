@@ -2282,20 +2282,13 @@ fn split_canonical_markdown(contents: &str) -> Result<(serde_norway::Mapping, St
     };
     let frontmatter = &rest[..end];
     let body = rest[end + "\n---\n".len()..].to_string();
-    let value = serde_norway::from_str::<serde_norway::Value>(frontmatter).map_err(|source| {
+    let mapping = crate::merge::parse_frontmatter_mapping(frontmatter).map_err(|source| {
         PipelineError::EntityFormat {
             path: PathBuf::from("<canonical>"),
             message: source.to_string(),
         }
     })?;
-    match value {
-        serde_norway::Value::Mapping(mapping) => Ok((mapping, body)),
-        serde_norway::Value::Null => Ok((serde_norway::Mapping::new(), body)),
-        _ => Err(PipelineError::EntityFormat {
-            path: PathBuf::from("<canonical>"),
-            message: "frontmatter must be a mapping".to_string(),
-        }),
-    }
+    Ok((mapping, body))
 }
 
 fn choose_canonical_view(views: &BTreeMap<LocationKey, EntityView>) -> Option<&EntityView> {

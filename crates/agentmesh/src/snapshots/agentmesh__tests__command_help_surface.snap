@@ -21,9 +21,9 @@ Commands:
   ack             Acknowledge pending conflict resolution
   watch           Run the low-level watcher daemon
   upgrade         Repin integrity to the current binary
-  start           Start AgentMesh for this repository by restoring local hooks
-  stop            Stop AgentMesh for this repository and keep shared state
-  uninstall       Remove AgentMesh-owned state from this repository
+  start           Start AgentMesh sync for this repository
+  stop            Stop AgentMesh sync for this repository and keep repository state
+  uninstall       Uninstall AgentMesh from this repository
   reconcile-lock  Recover from a textual lockfile merge conflict
   help            Print this message or the help of the given subcommand(s)
 
@@ -35,6 +35,12 @@ Options:
   -v, --verbose...     Increase output detail
   -h, --help           Print help
   -V, --version        Print version
+
+Lifecycle commands:
+  agentmesh start             Start AgentMesh sync for this repository
+  agentmesh stop              Stop AgentMesh sync for this repository, keeping repository state
+  agentmesh uninstall         Uninstall AgentMesh from this repository
+  agentmesh uninstall --full  Uninstall AgentMesh from this repository and this computer
 
 
 ## agentmesh status
@@ -200,7 +206,7 @@ Options:
 
 ## agentmesh start
 
-Start AgentMesh for this repository by restoring local hooks
+Start AgentMesh sync for this repository
 
 Usage: start [OPTIONS]
 
@@ -212,7 +218,7 @@ Options:
 
 ## agentmesh stop
 
-Stop AgentMesh for this repository and keep shared state
+Stop AgentMesh sync for this repository and keep repository state
 
 Usage: stop [OPTIONS]
 
@@ -224,7 +230,7 @@ Options:
 
 ## agentmesh uninstall
 
-Remove AgentMesh-owned state from this repository
+Uninstall AgentMesh from this repository
 
 Usage: uninstall [OPTIONS]
 
