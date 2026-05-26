@@ -566,13 +566,53 @@ fn parse_frontmatter_mapping(frontmatter: &str) -> Result<Mapping> {
         return Ok(Mapping::new());
     }
 
-    match serde_norway::from_str::<YamlValue>(frontmatter)
-        .map_err(|source| AdapterError::ParseFrontmatter { source })?
-    {
-        YamlValue::Mapping(mapping) => Ok(mapping),
-        YamlValue::Null => Ok(Mapping::new()),
-        _ => Err(AdapterError::FrontmatterNotMapping),
+    match serde_norway::from_str::<YamlValue>(frontmatter) {
+        Ok(YamlValue::Mapping(mapping)) => Ok(mapping),
+        Ok(YamlValue::Null) => Ok(Mapping::new()),
+        Ok(_) => Err(AdapterError::FrontmatterNotMapping),
+        Err(source) => parse_flat_frontmatter_mapping(frontmatter)
+            .ok_or(AdapterError::ParseFrontmatter { source }),
     }
+}
+
+fn parse_flat_frontmatter_mapping(frontmatter: &str) -> Option<Mapping> {
+    let mut mapping = Mapping::new();
+
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if line.chars().next().is_some_and(char::is_whitespace) {
+            return None;
+        }
+
+        let (key, value) = line.split_once(':')?;
+        let key = key.trim();
+        if key.is_empty() || !key.chars().all(is_plain_frontmatter_key_char) {
+            return None;
+        }
+
+        let value = value.trim();
+        if value
+            .chars()
+            .next()
+            .is_some_and(|character| matches!(character, '"' | '\'' | '[' | '{' | '|' | '>'))
+        {
+            return None;
+        }
+
+        mapping.insert(
+            YamlValue::String(key.to_string()),
+            YamlValue::String(value.to_string()),
+        );
+    }
+
+    Some(mapping)
+}
+
+fn is_plain_frontmatter_key_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
 }
 
 fn ordered_frontmatter(frontmatter: &Mapping) -> Mapping {
@@ -1075,9 +1115,10 @@ mod tests {
 
     use super::{
         Adapter, AdapterError, AdapterMetadata, FormatTranslation, canonicalize_frontmatter,
-        log_notification, run_adapter_with_io, sha256_bytes, write_atomic,
+        log_notification, parse_frontmatter, run_adapter_with_io, sha256_bytes, write_atomic,
     };
     use agentmesh_protocol::EntityType;
+    use serde_norway::Value as YamlValue;
 
     const SUPPORTED: &[EntityType] = &[EntityType::Instructions, EntityType::Skill];
     const READ_PATHS: &[&str] = &[".test/**", "AGENTS.md"];
@@ -1253,6 +1294,33 @@ mod tests {
 
         assert!(name_index < description_index);
         assert!(description_index < model_index);
+    }
+
+    #[test]
+    fn parses_flat_frontmatter_value_with_extra_colon() {
+        let input = "---\nname: implementation-auditor\ndescription: It performs a strict audit: enumerates scoped work.\nmodel: opus\n---\nBody\n";
+        let document = match parse_frontmatter(input) {
+            Ok(document) => document,
+            Err(error) => panic!("frontmatter should parse: {error}"),
+        };
+
+        assert_eq!(
+            document.frontmatter.get("name"),
+            Some(&YamlValue::String("implementation-auditor".to_string()))
+        );
+        assert_eq!(
+            document.frontmatter.get("description"),
+            Some(&YamlValue::String(
+                "It performs a strict audit: enumerates scoped work.".to_string()
+            ))
+        );
+        assert_eq!(document.body, "Body\n");
+    }
+
+    #[test]
+    fn malformed_structured_frontmatter_still_fails() {
+        let input = "---\nname: demo\nmetadata: {unterminated\n---\nBody\n";
+        assert!(parse_frontmatter(input).is_err());
     }
 
     #[test]

@@ -18,6 +18,7 @@ use serde_json::json;
     name = "agentmesh",
     version,
     about = "Synchronize repository intelligence across AI coding runtimes",
+    after_help = "Lifecycle commands:\n  agentmesh start             Start AgentMesh sync for this repository\n  agentmesh stop              Stop AgentMesh sync for this repository, keeping repository state\n  agentmesh uninstall         Uninstall AgentMesh from this repository\n  agentmesh uninstall --full  Uninstall AgentMesh from this repository and this computer",
     disable_version_flag = false
 )]
 struct Cli {
@@ -131,11 +132,11 @@ enum Command {
     Watch(WatchCommand),
     /// Repin integrity to the current binary.
     Upgrade(UpgradeCommand),
-    /// Start AgentMesh for this repository by restoring local hooks.
+    /// Start AgentMesh sync for this repository.
     Start(StartCommand),
-    /// Stop AgentMesh for this repository and keep shared state.
+    /// Stop AgentMesh sync for this repository and keep repository state.
     Stop(StopCommand),
-    /// Remove AgentMesh-owned state from this repository.
+    /// Uninstall AgentMesh from this repository.
     Uninstall(UninstallCommand),
     /// Recover from a textual lockfile merge conflict.
     ReconcileLock,

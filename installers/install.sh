@@ -376,12 +376,15 @@ verify_manifest_signature() {
   signature="$2"
   bundle="$3"
   cosign="$(cosign_command)"
-  "$cosign" verify-blob \
+  output="$("$cosign" verify-blob \
     --signature "$signature" \
     --bundle "$bundle" \
     --certificate-identity-regexp "$COSIGN_CERTIFICATE_IDENTITY_REGEXP" \
     --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
-    "$manifest" >/dev/null
+    "$manifest" 2>&1)" || {
+    printf '%s\n' "$output" >&2
+    exit 1
+  }
 }
 
 print_success_banner() {

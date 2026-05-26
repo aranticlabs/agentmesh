@@ -160,23 +160,63 @@ fn split_markdown(input: &str) -> Result<MarkdownParts> {
     let body = &rest[end + "\n---\n".len()..];
 
     Ok(MarkdownParts {
-        frontmatter: parse_frontmatter(frontmatter)?,
+        frontmatter: parse_frontmatter_mapping(frontmatter)?,
         body: body.to_string(),
     })
 }
 
-fn parse_frontmatter(frontmatter: &str) -> Result<Mapping> {
+pub(crate) fn parse_frontmatter_mapping(frontmatter: &str) -> Result<Mapping> {
     if frontmatter.trim().is_empty() {
         return Ok(Mapping::new());
     }
 
-    match serde_norway::from_str::<Value>(frontmatter)
-        .map_err(|source| MergeError::ParseFrontmatter { source })?
-    {
-        Value::Mapping(mapping) => Ok(mapping),
-        Value::Null => Ok(Mapping::new()),
-        _ => Err(MergeError::FrontmatterNotMapping),
+    match serde_norway::from_str::<Value>(frontmatter) {
+        Ok(Value::Mapping(mapping)) => Ok(mapping),
+        Ok(Value::Null) => Ok(Mapping::new()),
+        Ok(_) => Err(MergeError::FrontmatterNotMapping),
+        Err(source) => parse_flat_frontmatter_mapping(frontmatter)
+            .ok_or(MergeError::ParseFrontmatter { source }),
     }
+}
+
+fn parse_flat_frontmatter_mapping(frontmatter: &str) -> Option<Mapping> {
+    let mut mapping = Mapping::new();
+
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if line.chars().next().is_some_and(char::is_whitespace) {
+            return None;
+        }
+
+        let (key, value) = line.split_once(':')?;
+        let key = key.trim();
+        if key.is_empty() || !key.chars().all(is_plain_frontmatter_key_char) {
+            return None;
+        }
+
+        let value = value.trim();
+        if value
+            .chars()
+            .next()
+            .is_some_and(|character| matches!(character, '"' | '\'' | '[' | '{' | '|' | '>'))
+        {
+            return None;
+        }
+
+        mapping.insert(
+            Value::String(key.to_string()),
+            Value::String(value.to_string()),
+        );
+    }
+
+    Some(mapping)
+}
+
+fn is_plain_frontmatter_key_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
 }
 
 fn compose_markdown(frontmatter: &Mapping, body: &str) -> Result<String> {
@@ -449,6 +489,26 @@ Body
             canonical
                 .starts_with("---\nname: security-review\ndescription: Audit code\nallowed-tools:")
         );
+    }
+
+    #[test]
+    fn canonicalizes_flat_frontmatter_value_with_extra_colon() {
+        let canonical = match canonicalize_markdown(
+            "---\nname: implementation-auditor\ndescription: It performs a strict audit: enumerates scoped work.\nmodel: opus\n---\nBody\n",
+        ) {
+            Ok(canonical) => canonical,
+            Err(error) => panic!("canonicalization should succeed: {error}"),
+        };
+
+        assert!(canonical.contains("name: implementation-auditor"));
+        assert!(canonical.contains("audit: enumerates scoped work"));
+        assert!(canonical.ends_with("Body\n"));
+    }
+
+    #[test]
+    fn malformed_structured_frontmatter_still_fails() {
+        let input = "---\nname: demo\nmetadata: {unterminated\n---\nBody\n";
+        assert!(canonicalize_markdown(input).is_err());
     }
 
     #[test]

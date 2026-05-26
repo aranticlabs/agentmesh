@@ -256,13 +256,14 @@ function Get-CosignCommand {
 function Test-Sha256SumsSignature {
     param([string]$Manifest, [string]$Signature, [string]$Bundle)
     $cosign = Get-CosignCommand
-    & $cosign verify-blob `
+    $output = & $cosign verify-blob `
         --signature $Signature `
         --bundle $Bundle `
         --certificate-identity-regexp $CosignIdentity `
         --certificate-oidc-issuer $CosignIssuer `
-        $Manifest | Out-Null
+        $Manifest 2>&1
     if ($LASTEXITCODE -ne 0) {
+        $output | Write-Error
         throw "SHA256SUMS signature verification failed"
     }
 }

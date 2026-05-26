@@ -754,11 +754,11 @@ mod tests {
         );
         write(
             root.join(".claude/skills/bad/SKILL.md"),
-            "---\ndescription: bad: value\n---\nBody\n",
+            "---\ndescription: \"unterminated\n---\nBody\n",
         );
         write(
             root.join(".claude/agents/bad-agent.md"),
-            "---\ndescription: bad: value\n---\nReview code.\n",
+            "---\ndescription: \"unterminated\n---\nReview code.\n",
         );
 
         let adapter = ClaudeAdapter;
