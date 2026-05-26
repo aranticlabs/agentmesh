@@ -76,12 +76,13 @@ jobs:
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
           $stableUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
-          $stableMatch = [regex]::Match($stableUrl, '/download/(v[0-9]+\.[0-9]+\.[0-9]+)/agentmesh-v([0-9]+\.[0-9]+\.[0-9]+)-')
-          if (-not $stableMatch.Success) {
+          $stableTail = ($stableUrl -split '/download/', 2)[1]
+          $stableTag = ($stableTail -split '/', 2)[0]
+          $stableArtifact = Split-Path -Leaf $stableUrl
+          $stableVersion = $stableArtifact -replace '^agentmesh-v([0-9]+\.[0-9]+\.[0-9]+)-.*$', '$1'
+          if ($stableTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $stableVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
             throw "failed to parse stable installer URL: $stableUrl"
           }
-          $stableTag = $stableMatch.Groups[1].Value
-          $stableVersion = $stableMatch.Groups[2].Value
           $release = Join-Path $tmp "releases\$stableTag"
           $stage = Join-Path $tmp "stage\agentmesh"
           $install = Join-Path $tmp "install"
@@ -214,12 +215,13 @@ jobs:
 
           stable="$(sh installers/install.sh --print-url --channel=stable)"
           stable_artifact_url="$(printf '%s\n' "$stable" | sed -n 's/^artifact_url=//p')"
-          stable_tag="$(printf '%s\n' "$stable_artifact_url" | sed -n 's#.*/download/\\(v[0-9][0-9.]*\\)/agentmesh-v[0-9][0-9.]*-.*#\\1#p')"
-          stable_version="$(printf '%s\n' "$stable_artifact_url" | sed -n 's#.*/download/v[0-9][0-9.]*/agentmesh-v\\([0-9][0-9.]*\\)-.*#\\1#p')"
-          if [ -z "$stable_tag" ] || [ -z "$stable_version" ]; then
-            echo "failed to parse stable installer URL: $stable_artifact_url" >&2
-            exit 1
-          fi
+          stable_tail="${stable_artifact_url#*/download/}"
+          stable_tag="${stable_tail%%/*}"
+          stable_artifact="${stable_artifact_url##*/}"
+          stable_version="${stable_artifact#agentmesh-v}"
+          stable_version="${stable_version%%-*}"
+          case "$stable_tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
+          case "$stable_version" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
           case "$stable" in */"$stable_tag"/agentmesh-v"$stable_version"-*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
