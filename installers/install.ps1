@@ -163,6 +163,21 @@ function Get-ArtifactName {
     }
 }
 
+function Get-SmokeArtifactName {
+    param([string]$Platform)
+    switch ($Channel) {
+        "stable" { return "agentmesh-stable-$Platform.tar.gz" }
+        "nightly" { return "agentmesh-nightly-$Platform.tar.gz" }
+    }
+}
+
+function Get-DisplayTag {
+    switch ($Channel) {
+        "stable" { return "latest" }
+        "nightly" { return "nightly" }
+    }
+}
+
 function Get-StableVersion {
     if ($script:StableVersion) {
         return $script:StableVersion
@@ -394,12 +409,12 @@ if ($PrintUrl) {
     exit 0
 }
 if ($PrintBanner) {
-    Show-InstallSuccess -BinaryPath "<agentmesh-binary>" -Tag (Get-ReleaseTag)
+    Show-InstallSuccess -BinaryPath "<agentmesh-binary>" -Tag (Get-DisplayTag)
     exit 0
 }
 if ($Smoke) {
     $platform = Get-AgentMeshPlatform
-    $artifact = Get-ArtifactName -Platform $platform
+    $artifact = Get-SmokeArtifactName -Platform $platform
     Write-Output "agentmesh Windows installer smoke ok (platform=$platform artifact=$artifact)"
     exit 0
 }

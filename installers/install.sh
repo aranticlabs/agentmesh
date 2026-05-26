@@ -187,6 +187,14 @@ artifact_name() {
   esac
 }
 
+smoke_artifact_name() {
+  platform="$1"
+  case "$channel" in
+    stable) printf 'agentmesh-stable-%s.tar.gz\n' "$platform" ;;
+    nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
+  esac
+}
+
 stable_version() {
   if [ -n "$STABLE_VERSION" ]; then
     printf '%s\n' "$STABLE_VERSION"
@@ -633,7 +641,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$command" in
-  print-platform|verify-sha256|verify-sha256sums|verify-sha256sums-signature|help|upgrade-help) ;;
+  print-platform|verify-sha256|verify-sha256sums|verify-sha256sums-signature|help|upgrade-help|smoke) ;;
   *)
     if [ "$channel" = "stable" ]; then
       STABLE_VERSION="$(stable_version)"
@@ -665,7 +673,7 @@ USAGE
     ;;
   smoke)
     platform="$(detect_platform)"
-    printf 'agentmesh installer smoke ok (channel=%s platform=%s artifact=%s)\n' "$channel" "$platform" "$(artifact_name "$platform")"
+    printf 'agentmesh installer smoke ok (channel=%s platform=%s artifact=%s)\n' "$channel" "$platform" "$(smoke_artifact_name "$platform")"
     exit 0
     ;;
   upgrade-help)
