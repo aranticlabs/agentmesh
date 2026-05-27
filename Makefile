@@ -72,7 +72,8 @@ release:
 		echo "$(RED)[ERROR]$(NC) Version must look like X.Y.Z"; \
 		exit 1; \
 	fi
-	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	@set -e; \
+	branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
 	if [ "$$branch" != "main" ]; then \
 		echo "$(RED)[ERROR]$(NC) Releases must be tagged from main (currently on $$branch)"; \
@@ -130,7 +131,8 @@ retag:
 		echo "$(RED)[ERROR]$(NC) Version must look like X.Y.Z"; \
 		exit 1; \
 	fi
-	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	@set -e; \
+	branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
 	if [ "$$branch" != "main" ]; then \
 		echo "$(RED)[ERROR]$(NC) Releases must be retagged from main (currently on $$branch)"; \

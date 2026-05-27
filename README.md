@@ -52,7 +52,8 @@ cd /path/to/your/repo
 agentmesh init
 ```
 
-If `AGENTS.md` and `CLAUDE.md` differ, `init` asks which is canonical. For scripts or CI:
+If `AGENTS.md` and `CLAUDE.md` differ, `init` asks which agent memory file to use as
+the starting version for initial setup. After setup, sync is bidirectional. For scripts or CI:
 
 ```bash
 agentmesh init --canonical-instructions=AGENTS.md -y
