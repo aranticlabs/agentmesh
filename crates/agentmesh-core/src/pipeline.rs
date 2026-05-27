@@ -3390,10 +3390,6 @@ fn relative_to(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn write_integrity(repo_root: &Path, cache: &CacheLayout) -> Result<()> {
-    if cache.integrity_json.exists() {
-        verify_integrity(repo_root, cache)?;
-        return Ok(());
-    }
     let pin = current_integrity_pin(repo_root)?;
     write_integrity_pin(&cache.integrity_json, &pin)?;
     Ok(())
@@ -4407,6 +4403,42 @@ schema: 1
             error,
             Some(super::PipelineError::IntegrityMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn init_integrity_write_refreshes_changed_pin() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let repo = temp.path().join("repo");
+        if let Err(error) = fs::create_dir_all(&repo) {
+            panic!("repo should be created: {error}");
+        }
+        let cache = cache_for(&temp, &repo);
+        if let Err(error) = cache.ensure_dirs() {
+            panic!("cache dirs should be created: {error}");
+        }
+        if let Err(error) = super::write_integrity(&repo, &cache) {
+            panic!("integrity pin should write: {error}");
+        }
+        let mut pin = match crate::state::read_integrity_pin(&cache.integrity_json) {
+            Ok(pin) => pin,
+            Err(error) => panic!("integrity pin should read: {error}"),
+        };
+        pin.binary_sha256 =
+            hash("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        if let Err(error) = crate::state::write_integrity_pin(&cache.integrity_json, &pin) {
+            panic!("integrity pin should write: {error}");
+        }
+
+        if let Err(error) = super::write_integrity(&repo, &cache) {
+            panic!("integrity pin should refresh: {error}");
+        }
+
+        if let Err(error) = super::verify_integrity(&repo, &cache) {
+            panic!("refreshed integrity pin should verify: {error}");
+        }
     }
 
     #[test]
