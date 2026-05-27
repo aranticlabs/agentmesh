@@ -711,7 +711,10 @@ fn handle_init(context: &CliContext, command: InitCommand) -> Result<AgentmeshEx
     }
 
     if options.canonical_instructions.is_some() && !context.silent {
-        println!("canonical-instructions: parsed and ready for core init options");
+        println!(
+            "Using {} as the starting agent memory file for initial setup.",
+            selected_instruction_file(options.canonical_instructions)
+        );
     }
     if options.skip_hooks && !context.silent {
         println!("skip-hooks: parsed and ready for core init options");
@@ -763,7 +766,7 @@ fn resolve_init_instruction_choice(
 
     if !std::io::stdin().is_terminal() {
         return Err(CliError::new(
-            "divergent AGENTS.md and CLAUDE.md require --canonical-instructions or -y in non-interactive mode",
+            "divergent AGENTS.md and CLAUDE.md require choosing a source agent memory file; rerun with --canonical-instructions or -y in non-interactive mode",
             AgentmeshExitCode::Cancelled,
         ));
     }
@@ -775,10 +778,16 @@ fn resolve_init_instruction_choice(
         );
         println!("    AGENTS.md {}", instruction_preview(&agents));
         println!("    CLAUDE.md {}", instruction_preview(&claude));
-        println!("  Pick the canonical version:");
-        println!("    1) AGENTS.md");
-        println!("    2) CLAUDE.md");
-        println!("  Choice [1]:");
+        println!();
+        println!("  The agent memory files are different.");
+        println!("  Choose which one AgentMesh should use for the initial setup.");
+        println!("  AgentMesh will sync the other runtime's file from this starting version.");
+        println!();
+        println!("    [1] Use AGENTS.md");
+        println!("    [2] Use CLAUDE.md");
+        println!();
+        print!("  Choice [1 or 2]: ");
+        std::io::stdout().flush().map_err(CliError::from_io)?;
     }
 
     let mut input = String::new();
@@ -797,6 +806,14 @@ fn resolve_init_instruction_choice(
     }
 
     Ok(())
+}
+
+fn selected_instruction_file(source: Option<CanonicalInstructionSource>) -> &'static str {
+    match source {
+        Some(CanonicalInstructionSource::AgentsMd) => "AGENTS.md",
+        Some(CanonicalInstructionSource::ClaudeMd) => "CLAUDE.md",
+        None => "the default agent memory file",
+    }
 }
 
 fn instruction_preview(contents: &[u8]) -> String {

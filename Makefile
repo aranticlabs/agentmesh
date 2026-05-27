@@ -14,8 +14,8 @@ help:
 	@echo "  make ci-supply-chain Run dependency policy and advisory checks"
 	@echo "  make ci-installers   Run installer smoke checks"
 	@echo "  make build           Build the release binary"
-	@echo "  make release v=X.Y.Z Tag and push a GitHub release"
-	@echo "  make retag v=X.Y.Z   Recreate and push a GitHub release tag"
+	@echo "  make release v=X.Y.Z Bump Cargo versions, tag, and push a GitHub release"
+	@echo "  make retag v=X.Y.Z   Bump Cargo versions and overwrite an existing GitHub release tag"
 
 fmt:
 	@cargo fmt --all
@@ -65,21 +65,16 @@ ci: ci-rust ci-supply-chain ci-installers
 
 release:
 	@if [ -z "$(v)" ]; then \
-		echo "$(RED)[ERROR]$(NC) Version required. Usage: make release v=0.1.0"; \
+		echo "$(RED)[ERROR]$(NC) Version required. Usage: make release v=X.Y.Z"; \
 		exit 1; \
 	fi
 	@if ! printf '%s\n' "$(v)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
 		echo "$(RED)[ERROR]$(NC) Version must look like X.Y.Z"; \
 		exit 1; \
 	fi
-	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	@set -e; \
+	branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
-	manifest_version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
-	if [ "$$manifest_version" != "$(v)" ]; then \
-		echo "$(RED)[ERROR]$(NC) Cargo.toml workspace version is $$manifest_version, expected $(v)."; \
-		echo "        Bump the workspace version before tagging this release."; \
-		exit 1; \
-	fi; \
 	if [ "$$branch" != "main" ]; then \
 		echo "$(RED)[ERROR]$(NC) Releases must be tagged from main (currently on $$branch)"; \
 		exit 1; \
@@ -102,13 +97,23 @@ release:
 	echo ""; \
 	echo "  Branch: $$branch"; \
 	echo "  Tag:    $$tag"; \
-	echo "  Action: push main, then push tag to trigger GitHub release workflow"; \
+	echo "  Action: bump Cargo versions, commit, push main, then push tag"; \
 	echo ""; \
 	printf "$(YELLOW)Proceed? [y/N]$(NC) "; \
 	read -r confirm; \
 	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
 		echo "$(RED)[ABORT]$(NC) Release cancelled."; \
 		exit 1; \
+	fi; \
+	echo "$(BLUE)[INFO]$(NC) Bumping Cargo workspace version to $(v)..."; \
+	scripts/bump-release-version.sh "$(v)"; \
+	echo "$(BLUE)[INFO]$(NC) Validating Cargo metadata..."; \
+	cargo metadata --locked --format-version 1 >/dev/null; \
+	git add Cargo.toml Cargo.lock .release-please-manifest.json; \
+	if ! git diff --cached --quiet; then \
+		git commit -m "chore: release $$tag"; \
+	else \
+		echo "$(BLUE)[INFO]$(NC) Cargo workspace version already matches $(v)."; \
 	fi; \
 	echo "$(BLUE)[INFO]$(NC) Pushing $$branch..."; \
 	git push origin "$$branch"; \
@@ -119,20 +124,51 @@ release:
 
 retag:
 	@if [ -z "$(v)" ]; then \
-		echo "$(RED)[ERROR]$(NC) Version required. Usage: make retag v=0.1.0"; \
+		echo "$(RED)[ERROR]$(NC) Version required. Usage: make retag v=X.Y.Z"; \
 		exit 1; \
 	fi
 	@if ! printf '%s\n' "$(v)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
 		echo "$(RED)[ERROR]$(NC) Version must look like X.Y.Z"; \
 		exit 1; \
 	fi
-	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
+	@set -e; \
+	branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	tag="v$(v)"; \
-	manifest_version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
-	if [ "$$manifest_version" != "$(v)" ]; then \
-		echo "$(RED)[ERROR]$(NC) Cargo.toml workspace version is $$manifest_version, expected $(v)."; \
-		echo "        Bump the workspace version before retagging this release."; \
+	if [ "$$branch" != "main" ]; then \
+		echo "$(RED)[ERROR]$(NC) Releases must be retagged from main (currently on $$branch)"; \
 		exit 1; \
+	fi; \
+	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git status --porcelain)" ]; then \
+		echo "$(RED)[ERROR]$(NC) Commit or stash changes before retagging a release."; \
+		exit 1; \
+	fi; \
+	if ! git ls-remote --exit-code --tags origin "refs/tags/$$tag" >/dev/null 2>&1; then \
+		echo "$(RED)[ERROR]$(NC) Remote tag $$tag does not exist; use make release v=$(v) for a new release."; \
+		exit 1; \
+	fi; \
+	echo "$(BLUE)================================================$(NC)"; \
+	echo "$(BLUE)  AgentMesh Retag $(v)$(NC)"; \
+	echo "$(BLUE)================================================$(NC)"; \
+	echo ""; \
+	echo "  Branch: $$branch"; \
+	echo "  Tag:    $$tag"; \
+	echo "  Action: bump Cargo versions, commit, push main, then overwrite existing tag"; \
+	echo ""; \
+	printf "$(YELLOW)Proceed? [y/N]$(NC) "; \
+	read -r confirm; \
+	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
+		echo "$(RED)[ABORT]$(NC) Retag cancelled."; \
+		exit 1; \
+	fi; \
+	echo "$(BLUE)[INFO]$(NC) Bumping Cargo workspace version to $(v)..."; \
+	scripts/bump-release-version.sh "$(v)"; \
+	echo "$(BLUE)[INFO]$(NC) Validating Cargo metadata..."; \
+	cargo metadata --locked --format-version 1 >/dev/null; \
+	git add Cargo.toml Cargo.lock .release-please-manifest.json; \
+	if ! git diff --cached --quiet; then \
+		git commit -m "chore: release $$tag"; \
+	else \
+		echo "$(BLUE)[INFO]$(NC) Cargo workspace version already matches $(v)."; \
 	fi; \
 	echo "$(BLUE)[INFO]$(NC) Pushing $$branch to origin..."; \
 	git push origin "$$branch"; \

@@ -45,7 +45,16 @@ jobs:
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintPlatform
-      - run: powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+      - name: Verify Windows installer URL rendering
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $versionLine = Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+          if (-not $versionLine) {
+            throw "failed to read workspace version from Cargo.toml"
+          }
+          $env:AGENTMESH_LATEST_VERSION = "v$($versionLine.Matches[0].Groups[1].Value)"
+          powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
       - name: Verify Windows installer banner rendering
         shell: powershell
         run: |
@@ -75,6 +84,11 @@ jobs:
           }
 
           $tmp = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          $versionLine = Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+          if (-not $versionLine) {
+            throw "failed to read workspace version from Cargo.toml"
+          }
+          $env:AGENTMESH_LATEST_VERSION = "v$($versionLine.Matches[0].Groups[1].Value)"
           $stableUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
           $stableTail = ($stableUrl -split '/download/', 2)[1]
           $stableTag = ($stableTail -split '/', 2)[0]
@@ -213,6 +227,9 @@ jobs:
             fi
           }
 
+          workspace_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          test -n "$workspace_version"
+          export AGENTMESH_LATEST_VERSION="v$workspace_version"
           stable="$(sh installers/install.sh --print-url --channel=stable)"
           stable_artifact_url="$(printf '%s\n' "$stable" | sed -n 's/^artifact_url=//p')"
           stable_tail="${stable_artifact_url#*/download/}"
