@@ -19,6 +19,7 @@ use thiserror::Error;
 const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(500);
 const DEFAULT_VCS_THROTTLE: Duration = Duration::from_secs(2);
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const BACKGROUND_START_TIMEOUT: Duration = Duration::from_secs(10);
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ROTATED_LOGS: u8 = 3;
@@ -362,8 +363,39 @@ fn spawn_background(
             "state": record.state,
         }),
     )?;
+    wait_for_background_start(layout, record.pid)?;
 
     Ok(handle(repo_root, layout))
+}
+
+fn wait_for_background_start(layout: &WatcherLayout, pid: u32) -> Result<()> {
+    let deadline = Instant::now() + BACKGROUND_START_TIMEOUT;
+    loop {
+        if let Ok(record) = read_json::<WatcherRecord>(&layout.state_file) {
+            if record.pid == pid && record.state == STATE_RUNNING && process_running(pid) {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            append_log(
+                &layout.log_file,
+                "start-timeout",
+                json!({
+                    "pid": pid,
+                    "timeout_ms": duration_ms(BACKGROUND_START_TIMEOUT),
+                }),
+            )?;
+            return Err(WatcherError::Io {
+                action: "wait for watcher process to start",
+                path: layout.state_file.clone(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "watcher process did not report running",
+                ),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn register_service(repo_root: &Path, opts: &WatchOptions, layout: &WatcherLayout) -> Result<()> {
