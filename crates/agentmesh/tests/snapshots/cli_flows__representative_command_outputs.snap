@@ -5,7 +5,7 @@ expression: surface
 ## status
 exit: Some(0)
 stdout:
-AgentMesh 0.1.0   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
+AgentMesh <version>   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
   hooks:    claude ✗   codex ✗
   watcher:  stopped (drain: idle)
   pending:  0 in queue
@@ -18,7 +18,7 @@ stderr:
 ## status verbose
 exit: Some(0)
 stdout:
-AgentMesh 0.1.0   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
+AgentMesh <version>   repo: repo   lockfile: not ready (failed to read lockfile at <repo>/agentmesh.lock)
   hooks:    claude ✗   codex ✗
   watcher:  stopped (drain: idle)
   pending:  0 in queue
@@ -123,7 +123,7 @@ stderr:
 ## doctor
 exit: Some(0)
 stdout:
-AgentMesh 0.1.0
+AgentMesh <version>
 Repository: <repo>
 
 Adapters:
@@ -171,7 +171,7 @@ Core findings:
   integrity_pinned_sha256: <sha256>
   integrity_current_binary: <agentmesh-bin>
   integrity_current_sha256: <sha256>
-  integrity_version: 0.1.0
+  integrity_version: <version>
   adapter_claude: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
   adapter_codex: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
   adapter_coverage_instructions: claude,codex

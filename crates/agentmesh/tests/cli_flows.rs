@@ -179,6 +179,7 @@ fn normalize_snapshot_text(text: &str, repo: &Path, cache: &Path, home: &Path) -
         .replace(&repo.display().to_string(), "<repo>")
         .replace(&cache.display().to_string(), "<cache>")
         .replace(&home.display().to_string(), "<home>")
+        .replace(agentmesh_core::VERSION, "<version>")
         .replace('\\', "/");
     normalize_hex_runs(&normalized)
 }
