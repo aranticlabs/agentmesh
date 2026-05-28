@@ -875,6 +875,15 @@ fn install_stop_and_start_are_machine_local_and_surgical() {
     assert!(codex_overlay.contains("echo user"));
     assert!(codex_overlay.contains("codex-hook"));
     assert!(repo_cache_dir.exists());
+
+    let watcher_running = wait_until(Duration::from_secs(5), || {
+        String::from_utf8_lossy(&run_agentmesh(&repo, &cache, &["status"]).stdout)
+            .contains("watcher:  running")
+    });
+    assert!(watcher_running, "start should launch the watcher");
+
+    let stop = run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]);
+    assert_success(&stop);
 }
 
 #[test]
@@ -1404,6 +1413,8 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         assert!(!contents.contains(&escaped_stale_binary));
         assert!(contents.contains(&escaped_binary));
     }
+
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]));
 }
 
 #[test]

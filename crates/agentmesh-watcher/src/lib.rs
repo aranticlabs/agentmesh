@@ -263,6 +263,12 @@ fn start_with_cache_root(
     if !opts.register_as_service {
         if let Some(record) = read_active_record(&layout)? {
             if is_running_state(&record.state) {
+                if opts.foreground
+                    && record.pid == std::process::id()
+                    && record.state == STATE_BACKGROUND_SPAWNED
+                {
+                    return run_foreground(repo_root, opts, &layout);
+                }
                 append_log(
                     &layout.log_file,
                     "start-idempotent",
@@ -322,6 +328,11 @@ fn spawn_background(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     if opts.persistent {
         command.arg("--persistent");
     }
@@ -1589,6 +1600,43 @@ mod tests {
         assert_eq!(status.state, STATE_STOPPED);
         assert_eq!(status.drain_status, DRAIN_IDLE);
         assert!(status.idle_since.is_none());
+    }
+
+    #[test]
+    fn foreground_child_promotes_background_spawn_record() {
+        let temp = tempdir();
+        let repo = temp.path().join("repo");
+        create_dir(&repo);
+        let cache = temp.path().join("cache");
+        let layout = layout(&repo, &cache);
+        let spawned = WatcherRecord::new(
+            std::process::id(),
+            &repo,
+            &WatchOptions::default(),
+            false,
+            STATE_BACKGROUND_SPAWNED,
+            DRAIN_IDLE,
+        );
+        if let Err(error) = write_record(&layout, &spawned) {
+            panic!("background-spawned record should write: {error}");
+        }
+        let options = WatchOptions {
+            foreground: true,
+            idle_timeout: Some(Duration::from_millis(5)),
+            debounce: Duration::from_millis(1),
+            vcs_throttle: Duration::from_millis(1),
+            ..WatchOptions::default()
+        };
+
+        if let Err(error) = start_with_cache_root(&repo, options, &cache) {
+            panic!("foreground child should enter the watcher loop: {error}");
+        }
+        let log = match fs::read_to_string(layout.log_file) {
+            Ok(log) => log,
+            Err(error) => panic!("watcher log should be readable: {error}"),
+        };
+
+        assert!(log.contains("start-foreground"));
     }
 
     #[test]

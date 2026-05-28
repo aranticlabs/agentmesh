@@ -731,6 +731,7 @@ fn handle_init(context: &CliContext, command: InitCommand) -> Result<AgentmeshEx
     .map_err(map_core_error)?;
     if !options.skip_hooks {
         install_detected_runtime_hooks(context)?;
+        start_sync_watcher(context)?;
     }
     Ok(print_summary(context, summary.changed, "init"))
 }
@@ -1364,6 +1365,10 @@ fn handle_start(context: &CliContext, command: StartCommand) -> Result<Agentmesh
                 context.paint(OutputStyle::Info, "→")
             );
             println!(
+                "    {} Would start the AgentMesh watcher for immediate file sync",
+                context.paint(OutputStyle::Info, "→")
+            );
+            println!(
                 "    {} Would keep agentmesh.lock, .ai/, and runtime files",
                 context.paint(OutputStyle::Info, "→")
             );
@@ -1378,6 +1383,7 @@ fn handle_start(context: &CliContext, command: StartCommand) -> Result<Agentmesh
         &[
             "refresh machine-local AgentMesh state for this repository",
             "install AgentMesh-owned hooks for detected runtimes",
+            "start the AgentMesh watcher for immediate file sync",
             "keep agentmesh.lock, .ai/, and runtime files",
         ],
     )?;
@@ -1392,6 +1398,7 @@ fn handle_start(context: &CliContext, command: StartCommand) -> Result<Agentmesh
     )
     .map_err(map_core_error)?;
     install_detected_runtime_hooks(context)?;
+    start_sync_watcher(context)?;
 
     if !context.silent {
         println!(
@@ -2821,12 +2828,18 @@ fn print_codex_trust_prompt(context: &CliContext, hooks: &[agentmesh_protocol::I
             "{} Codex requires you to review and trust new command hooks before they run.",
             context.paint(OutputStyle::Warning, "⚠")
         );
-        println!("  On your next Codex tool call, Codex will prompt:");
+        println!("  What to do:");
+        println!("  1. Open Codex in this repository.");
+        println!(
+            "  2. Run any Codex action that uses a tool, such as a file read or shell command."
+        );
+        println!("  3. When Codex shows the hook trust prompt, approve this command:");
         println!();
-        println!("      \"Trust the new hook '{}'?\"", hook.command);
+        println!("      {}", hook.command);
         println!();
-        println!("  Approve once; Codex remembers the trust decision for this hook definition.");
-        println!("  Until then, Codex runs normally but this hook will not fire.");
+        println!("  This is a one-time Codex security approval. Until approved, AgentMesh still");
+        println!("  syncs via the watcher, Claude hooks, and manual `agentmesh sync`, but Codex");
+        println!("  will not run its own hook.");
     }
 }
 
@@ -3127,6 +3140,27 @@ fn ensure_watcher_for_trigger(context: &CliContext, options: &ParsedSyncOptions)
     )
     .map(|_| ())
     .map_err(map_watcher_error)
+}
+
+fn start_sync_watcher(context: &CliContext) -> Result<()> {
+    let handle = agentmesh_watcher::start(
+        &context.repo_root,
+        agentmesh_watcher::WatchOptions {
+            persistent: true,
+            foreground: false,
+            register_as_service: false,
+            ..agentmesh_watcher::WatchOptions::default()
+        },
+    )
+    .map_err(map_watcher_error)?;
+
+    if !context.silent {
+        println!("  watcher: running");
+        println!("  watcher state: {}", handle.state_file.display());
+        println!("  watcher log:   {}", handle.log_file.display());
+    }
+
+    Ok(())
 }
 
 fn hook_ownership_exists_for_trigger(context: &CliContext, trigger: &SyncTrigger) -> Result<bool> {

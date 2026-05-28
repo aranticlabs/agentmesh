@@ -73,6 +73,8 @@ To start AgentMesh again for an initialized repository:
 agentmesh start -y
 ```
 
+This refreshes machine-local hooks and starts the watcher for immediate direct-file sync.
+
 To stop AgentMesh for the current repository while keeping all repository state and AgentMesh installed on this computer:
 
 ```bash
