@@ -3144,6 +3144,10 @@ fn ensure_watcher_for_trigger(context: &CliContext, options: &ParsedSyncOptions)
 }
 
 fn start_sync_watcher(context: &CliContext) -> Result<()> {
+    if std::env::var_os("AGENTMESH_DISABLE_WATCHER_AUTOSTART").is_some() {
+        return Ok(());
+    }
+
     let handle = agentmesh_watcher::start(
         &context.repo_root,
         agentmesh_watcher::WatchOptions {
