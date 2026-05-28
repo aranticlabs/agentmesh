@@ -22,27 +22,27 @@ fn run_agentmesh(repo: &Path, cache: &Path, args: &[&str]) -> Output {
 }
 
 fn run_agentmesh_binary(binary: &Path, repo: &Path, cache: &Path, args: &[&str]) -> Output {
-    match Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .arg("--cwd")
         .arg(repo)
-        .env("AGENTMESH_CACHE_DIR", cache)
-        .args(args)
-        .output()
-    {
+        .env("AGENTMESH_CACHE_DIR", cache);
+    configure_windows_test_command(&mut command);
+    match command.args(args).output() {
         Ok(output) => output,
         Err(error) => panic!("agentmesh command should run: {error}"),
     }
 }
 
 fn run_agentmesh_with_home(repo: &Path, cache: &Path, home: &Path, args: &[&str]) -> Output {
-    match Command::new(agentmesh_bin())
+    let mut command = Command::new(agentmesh_bin());
+    command
         .arg("--cwd")
         .arg(repo)
         .env("AGENTMESH_CACHE_DIR", cache)
-        .env("HOME", home)
-        .args(args)
-        .output()
-    {
+        .env("HOME", home);
+    configure_windows_test_command(&mut command);
+    match command.args(args).output() {
         Ok(output) => output,
         Err(error) => panic!("agentmesh command should run: {error}"),
     }
@@ -59,6 +59,7 @@ fn run_agentmesh_with_env(
         .arg("--cwd")
         .arg(repo)
         .env("AGENTMESH_CACHE_DIR", cache);
+    configure_windows_test_command(&mut command);
     for (key, value) in envs {
         command.env(key, value);
     }
@@ -69,14 +70,14 @@ fn run_agentmesh_with_env(
 }
 
 fn run_agentmesh_without_no_color(repo: &Path, cache: &Path, args: &[&str]) -> Output {
-    match Command::new(agentmesh_bin())
+    let mut command = Command::new(agentmesh_bin());
+    command
         .arg("--cwd")
         .arg(repo)
         .env("AGENTMESH_CACHE_DIR", cache)
-        .env_remove("NO_COLOR")
-        .args(args)
-        .output()
-    {
+        .env_remove("NO_COLOR");
+    configure_windows_test_command(&mut command);
+    match command.args(args).output() {
         Ok(output) => output,
         Err(error) => panic!("agentmesh command should run: {error}"),
     }
@@ -93,6 +94,12 @@ fn spawn_agentmesh_with_home(repo: &Path, cache: &Path, home: &Path, args: &[&st
     {
         Ok(child) => child,
         Err(error) => panic!("agentmesh command should spawn: {error}"),
+    }
+}
+
+fn configure_windows_test_command(command: &mut Command) {
+    if cfg!(windows) {
+        command.env("AGENTMESH_DISABLE_WATCHER_AUTOSTART", "1");
     }
 }
 
@@ -585,6 +592,8 @@ fn init_projects_all_entities_and_installs_detected_runtime_hooks() {
     assert!(read(repo.join(".codex/hooks.json")).contains("codex-hook"));
     assert!(find_named_file(&cache, "integrity.json").is_some());
     assert!(find_named_file(&cache, "hook-ownership.json").is_some());
+
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]));
 }
 
 #[test]
@@ -875,6 +884,17 @@ fn install_stop_and_start_are_machine_local_and_surgical() {
     assert!(codex_overlay.contains("echo user"));
     assert!(codex_overlay.contains("codex-hook"));
     assert!(repo_cache_dir.exists());
+
+    if !cfg!(windows) {
+        let watcher_running = wait_until(Duration::from_secs(5), || {
+            String::from_utf8_lossy(&run_agentmesh(&repo, &cache, &["status"]).stdout)
+                .contains("watcher:  running")
+        });
+        assert!(watcher_running, "start should launch the watcher");
+    }
+
+    let stop = run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]);
+    assert_success(&stop);
 }
 
 #[test]
@@ -1404,6 +1424,8 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         assert!(!contents.contains(&escaped_stale_binary));
         assert!(contents.contains(&escaped_binary));
     }
+
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]));
 }
 
 #[test]

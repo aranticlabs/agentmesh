@@ -62,6 +62,7 @@ stdout:
   Canonical instructions: default
   Accept prompts: true
   Install hooks: false
+  Start watcher: false
   No repository or machine-local files were changed.
 
 stderr:
@@ -201,6 +202,7 @@ exit: Some(0)
 stdout:
     → Would refresh machine-local AgentMesh state for this repository
     → Would install AgentMesh-owned hooks for detected runtimes
+    → Would start the AgentMesh watcher for immediate file sync
     → Would keep agentmesh.lock, .ai/, and runtime files
   No files were changed; AgentMesh sync was not started.
 

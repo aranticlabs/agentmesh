@@ -76,8 +76,10 @@ git commit -m "chore: initialize AgentMesh sync"
 Do not commit machine-local hook files (`.claude/settings.local.json`, `.codex/hooks.json`). Each
 teammate runs `agentmesh init` on their machine. Add `.codex/hooks.json` to `.gitignore`.
 
-Codex requires a one-time trust approval for the command hook before it runs. Sync still works via
-the watcher daemon and manual `agentmesh sync` until then.
+Codex requires a one-time trust approval before it runs the AgentMesh command hook. After setup,
+open Codex in the repository and run any tool-backed action; when Codex asks whether to trust the
+AgentMesh hook command, approve it once. Sync still works via the watcher daemon, Claude hooks, and
+manual `agentmesh sync` until then.
 
 | Situation                  | Command                              |
 | -------------------------- | ------------------------------------ |
@@ -96,7 +98,9 @@ To start AgentMesh again for an initialized repository:
 agentmesh start -y
 ```
 
-This refreshes machine-local AgentMesh state and installs AgentMesh-owned hooks for detected runtimes. It keeps `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` intact.
+This refreshes machine-local AgentMesh state, installs AgentMesh-owned hooks for detected runtimes,
+and starts the watcher so direct edits to `AGENTS.md`, `CLAUDE.md`, and `.ai/` files sync
+immediately. It keeps `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` intact.
 
 To stop AgentMesh for the current repository while keeping all repository state and AgentMesh installed on this computer:
 
