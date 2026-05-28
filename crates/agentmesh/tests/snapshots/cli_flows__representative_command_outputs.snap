@@ -62,6 +62,7 @@ stdout:
   Canonical instructions: default
   Accept prompts: true
   Install hooks: false
+  Start watcher: false
   No repository or machine-local files were changed.
 
 stderr:

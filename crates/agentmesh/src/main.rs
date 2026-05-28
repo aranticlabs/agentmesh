@@ -897,6 +897,7 @@ fn print_init_dry_run(context: &CliContext, options: &ParsedInitOptions) -> Resu
     );
     println!("  Accept prompts: {}", options.yes);
     println!("  Install hooks: {}", !options.skip_hooks);
+    println!("  Start watcher: {}", !options.skip_hooks);
     println!("  No repository or machine-local files were changed.");
     Ok(())
 }

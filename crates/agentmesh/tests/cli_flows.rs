@@ -585,6 +585,8 @@ fn init_projects_all_entities_and_installs_detected_runtime_hooks() {
     assert!(read(repo.join(".codex/hooks.json")).contains("codex-hook"));
     assert!(find_named_file(&cache, "integrity.json").is_some());
     assert!(find_named_file(&cache, "hook-ownership.json").is_some());
+
+    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]));
 }
 
 #[test]
