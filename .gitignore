@@ -50,8 +50,10 @@ coverage/
 .codex/hooks.json
 
 # AI
+.ai/
 .claude/
 .codex/
 .cursor/
 CLAUDE.md
 AGENTS.md
+agentmesh.lock
