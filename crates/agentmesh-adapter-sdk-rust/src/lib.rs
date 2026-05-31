@@ -23,6 +23,9 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 
 const COMMON_FRONTMATTER_KEYS: &[&str] = &["name", "description", "allowed-tools", "model"];
+const MAX_ENTITY_TREE_DEPTH: usize = 32;
+const MAX_ENTITY_FILE_COUNT: usize = 1024;
+const MAX_ENTITY_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Static format-translation metadata for one entity type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -831,6 +834,171 @@ pub fn read_dir_sorted(path: &Path) -> Result<Vec<fs::DirEntry>> {
     Ok(entries)
 }
 
+/// Returns a directory entry's type without following symlinks.
+pub fn dir_entry_file_type(entry: &fs::DirEntry) -> Result<fs::FileType> {
+    entry.file_type().map_err(|source| AdapterError::Io {
+        action: "read file type",
+        path: entry.path(),
+        source,
+    })
+}
+
+/// Returns true when an existing path is a regular file inside the workspace.
+pub fn is_regular_file(workspace_root: &Path, path: &Path) -> Result<bool> {
+    Ok(safe_metadata(workspace_root, path)?.is_some_and(|metadata| metadata.is_file()))
+}
+
+/// Returns true when an existing path is a directory inside the workspace.
+pub fn is_regular_dir(workspace_root: &Path, path: &Path) -> Result<bool> {
+    Ok(safe_metadata(workspace_root, path)?.is_some_and(|metadata| metadata.is_dir()))
+}
+
+/// Collects entity files from a directory tree while rejecting symlink traversal.
+pub fn collect_entity_files(
+    root: &Path,
+    dir: &Path,
+    files: &mut BTreeMap<PathBuf, EntityFile>,
+) -> Result<()> {
+    let mut total_bytes = 0;
+    collect_entity_files_inner(root, dir, files, 0, &mut total_bytes)
+}
+
+fn collect_entity_files_inner(
+    root: &Path,
+    dir: &Path,
+    files: &mut BTreeMap<PathBuf, EntityFile>,
+    depth: usize,
+    total_bytes: &mut u64,
+) -> Result<()> {
+    if depth > MAX_ENTITY_TREE_DEPTH {
+        return Err(entity_limit_error(
+            dir,
+            format!("entity directory depth exceeds {MAX_ENTITY_TREE_DEPTH}"),
+        ));
+    }
+
+    for entry in read_dir_sorted(dir)? {
+        let path = entry.path();
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            return Err(symlink_error(&path));
+        }
+        if file_type.is_dir() {
+            collect_entity_files_inner(root, &path, files, depth + 1, total_bytes)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        if files.len() >= MAX_ENTITY_FILE_COUNT {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity file count exceeds {MAX_ENTITY_FILE_COUNT}"),
+            ));
+        }
+
+        let metadata = fs::symlink_metadata(&path).map_err(|source| AdapterError::Io {
+            action: "read metadata",
+            path: path.clone(),
+            source,
+        })?;
+        let projected_bytes = total_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if projected_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
+        }
+
+        let relative = path.strip_prefix(root).map_err(|_| {
+            AdapterError::rpc(
+                AdapterErrorCode::WorkspaceOutsideBound,
+                format!("{} is outside {}", path.display(), root.display()),
+            )
+        })?;
+        let bytes = fs::read(&path).map_err(|source| AdapterError::Io {
+            action: "read file",
+            path: path.clone(),
+            source,
+        })?;
+        *total_bytes = total_bytes
+            .checked_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if *total_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
+        }
+        files.insert(relative.to_path_buf(), EntityFile::from_bytes(bytes));
+    }
+
+    Ok(())
+}
+
+fn safe_metadata(workspace_root: &Path, path: &Path) -> Result<Option<fs::Metadata>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(AdapterError::Io {
+                action: "read metadata",
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    ensure_no_symlink_components(workspace_root, path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(symlink_error(path));
+    }
+    Ok(Some(metadata))
+}
+
+fn ensure_no_symlink_components(workspace_root: &Path, path: &Path) -> Result<()> {
+    let relative = path.strip_prefix(workspace_root).map_err(|_| {
+        AdapterError::rpc(
+            AdapterErrorCode::WorkspaceOutsideBound,
+            format!("{} is outside {}", path.display(), workspace_root.display()),
+        )
+    })?;
+    let mut current = workspace_root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err(AdapterError::rpc(
+                AdapterErrorCode::WorkspaceOutsideBound,
+                format!("unsafe path component in {}", path.display()),
+            ));
+        };
+        current.push(part);
+        let metadata = fs::symlink_metadata(&current).map_err(|source| AdapterError::Io {
+            action: "read metadata",
+            path: current.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(symlink_error(&current));
+        }
+    }
+    Ok(())
+}
+
+fn symlink_error(path: &Path) -> AdapterError {
+    AdapterError::rpc(
+        AdapterErrorCode::WorkspaceOutsideBound,
+        format!("symlinked path {} is not supported", path.display()),
+    )
+}
+
+fn entity_limit_error(path: &Path, message: impl Into<String>) -> AdapterError {
+    AdapterError::rpc(
+        AdapterErrorCode::FormatTranslationFailed,
+        format!("{}: {}", path.display(), message.into()),
+    )
+}
+
 /// Reads a file to a UTF-8 string.
 pub fn read_to_string(path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|source| AdapterError::Io {
@@ -873,16 +1041,28 @@ pub fn is_safe_relative(path: &Path) -> bool {
 
 /// Returns the maximum modification time of a file or directory tree.
 pub fn max_mtime_string(path: &Path) -> Result<String> {
-    if path.is_file() {
+    let metadata = fs::symlink_metadata(path).map_err(|source| AdapterError::Io {
+        action: "read metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(symlink_error(path));
+    }
+    if metadata.is_file() {
         return mtime_string(path);
     }
     let mut newest = UNIX_EPOCH;
     for entry in read_dir_sorted(path)? {
         let entry_path = entry.path();
-        let modified = if entry_path.is_dir() {
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            return Err(symlink_error(&entry_path));
+        }
+        let modified = if file_type.is_dir() {
             system_time_from_string(&max_mtime_string(&entry_path)?)
         } else {
-            fs::metadata(&entry_path)
+            fs::symlink_metadata(&entry_path)
                 .and_then(|metadata| metadata.modified())
                 .unwrap_or(UNIX_EPOCH)
         };
@@ -895,13 +1075,19 @@ pub fn max_mtime_string(path: &Path) -> Result<String> {
 
 /// Returns the modification time of a file as a formatted string.
 pub fn mtime_string(path: &Path) -> Result<String> {
-    let modified = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|source| AdapterError::Io {
-            action: "read metadata",
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let metadata = fs::symlink_metadata(path).map_err(|source| AdapterError::Io {
+        action: "read metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(symlink_error(path));
+    }
+    let modified = metadata.modified().map_err(|source| AdapterError::Io {
+        action: "read metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(format_system_time(modified))
 }
 
@@ -1115,7 +1301,8 @@ mod tests {
 
     use super::{
         Adapter, AdapterError, AdapterMetadata, FormatTranslation, canonicalize_frontmatter,
-        log_notification, parse_frontmatter, run_adapter_with_io, sha256_bytes, write_atomic,
+        collect_entity_files, log_notification, parse_frontmatter, run_adapter_with_io,
+        sha256_bytes, write_atomic,
     };
     use agentmesh_protocol::EntityType;
     use serde_norway::Value as YamlValue;
@@ -1348,6 +1535,38 @@ mod tests {
             Err(error) => panic!("file should be readable: {error}"),
         };
         assert_eq!(contents, "content");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_entity_files_rejects_symlinked_paths() {
+        use std::os::unix::fs::symlink;
+
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path().join("skill");
+        if let Err(error) = std::fs::create_dir_all(&root) {
+            panic!("skill directory should be created: {error}");
+        }
+        if let Err(error) = std::fs::write(root.join("SKILL.md"), "content") {
+            panic!("skill file should be written: {error}");
+        }
+        if let Err(error) = std::fs::write(temp.path().join("outside.txt"), "outside") {
+            panic!("outside file should be written: {error}");
+        }
+        if let Err(error) = symlink(temp.path().join("outside.txt"), root.join("outside.txt")) {
+            panic!("symlink should be created: {error}");
+        }
+
+        let mut files = BTreeMap::new();
+        let error = match collect_entity_files(&root, &root, &mut files) {
+            Ok(()) => panic!("symlinked entity path should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("symlinked path"));
     }
 
     #[test]

@@ -53,6 +53,9 @@ use crate::{
 pub type Result<T> = std::result::Result<T, PipelineError>;
 
 const DOCTOR_PRIVACY_WARNING_DETAIL_LIMIT: usize = 20;
+const MAX_ENTITY_TREE_DEPTH: usize = 32;
+const MAX_ENTITY_FILE_COUNT: usize = 1024;
+const MAX_ENTITY_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Runtime adapter operations required by the sync pipeline.
 pub trait AdapterRegistry {
@@ -816,7 +819,7 @@ fn entity_location_hash(
     lockfile_path: &Path,
 ) -> Result<Option<Hash>> {
     let absolute_path = path_from_lockfile(repo_root, location, lockfile_path);
-    if !absolute_path.exists() {
+    if !is_regular_file_path(&absolute_path)? {
         return Ok(None);
     }
     if entity_type != EntityType::Skill {
@@ -825,7 +828,7 @@ fn entity_location_hash(
     let Some(root) = absolute_path.parent() else {
         return Ok(None);
     };
-    if !root.is_dir() {
+    if !is_regular_dir_path(root)? {
         return Ok(None);
     }
     let files = collect_entity_text_files(root, root)?;
@@ -2271,7 +2274,7 @@ struct EntityCandidate {
 
 fn entity_candidates(repo_root: &Path) -> Result<Vec<EntityCandidate>> {
     let mut candidates = Vec::new();
-    if repo_root.join("AGENTS.md").is_file() {
+    if is_regular_file_path(&repo_root.join("AGENTS.md"))? {
         candidates.push(EntityCandidate {
             entity_type: EntityType::Instructions,
             location_key: location_key(".ai")?,
@@ -2301,16 +2304,16 @@ fn scan_skill_dir(
     candidates: &mut Vec<EntityCandidate>,
 ) -> Result<()> {
     let dir = repo_root.join(relative_dir);
-    if !dir.is_dir() {
+    if !is_regular_dir_path(&dir)? {
         return Ok(());
     }
 
     for entry in read_dir_sorted(&dir)? {
-        if !entry.is_dir() {
+        if !is_regular_dir_path(&entry)? {
             continue;
         }
         let skill_md = entry.join("SKILL.md");
-        if !skill_md.is_file() {
+        if !is_regular_file_path(&skill_md)? {
             continue;
         }
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
@@ -2336,12 +2339,12 @@ fn scan_subagent_dir(
     candidates: &mut Vec<EntityCandidate>,
 ) -> Result<()> {
     let dir = repo_root.join(relative_dir);
-    if !dir.is_dir() {
+    if !is_regular_dir_path(&dir)? {
         return Ok(());
     }
 
     for entry in read_dir_sorted(&dir)? {
-        if !entry.is_file() {
+        if !is_regular_file_path(&entry)? {
             continue;
         }
         if entry.extension().and_then(|value| value.to_str()) != Some(extension) {
@@ -2379,6 +2382,32 @@ fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(entries)
 }
 
+fn is_regular_file_path(path: &Path) -> Result<bool> {
+    Ok(safe_path_metadata(path)?.is_some_and(|metadata| metadata.is_file()))
+}
+
+fn is_regular_dir_path(path: &Path) -> Result<bool> {
+    Ok(safe_path_metadata(path)?.is_some_and(|metadata| metadata.is_dir()))
+}
+
+fn safe_path_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(PipelineError::Io {
+                action: "read metadata",
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(symlink_entity_error(path));
+    }
+    Ok(Some(metadata))
+}
+
 fn entity_files_for_candidate(
     repo_root: &Path,
     candidate: &EntityCandidate,
@@ -2411,13 +2440,64 @@ fn entity_files_for_candidate(
 
 fn collect_entity_text_files(root: &Path, dir: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     let mut files = BTreeMap::new();
+    let mut total_bytes = 0;
+    collect_entity_text_files_inner(root, dir, 0, &mut files, &mut total_bytes)?;
+    Ok(files)
+}
+
+fn collect_entity_text_files_inner(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    total_bytes: &mut u64,
+) -> Result<()> {
+    if depth > MAX_ENTITY_TREE_DEPTH {
+        return Err(entity_limit_error(
+            dir,
+            format!("entity directory depth exceeds {MAX_ENTITY_TREE_DEPTH}"),
+        ));
+    }
+
+    let dir_metadata = fs::symlink_metadata(dir).map_err(|source| PipelineError::Io {
+        action: "read metadata",
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    if dir_metadata.file_type().is_symlink() {
+        return Err(symlink_entity_error(dir));
+    }
+
     for path in read_dir_sorted(dir)? {
-        if path.is_dir() {
-            files.extend(collect_entity_text_files(root, &path)?);
+        let metadata = fs::symlink_metadata(&path).map_err(|source| PipelineError::Io {
+            action: "read metadata",
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(symlink_entity_error(&path));
+        }
+        if metadata.is_dir() {
+            collect_entity_text_files_inner(root, &path, depth + 1, files, total_bytes)?;
             continue;
         }
-        if !path.is_file() {
+        if !metadata.is_file() {
             continue;
+        }
+        if files.len() >= MAX_ENTITY_FILE_COUNT {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity file count exceeds {MAX_ENTITY_FILE_COUNT}"),
+            ));
+        }
+        let projected_bytes = total_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if projected_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
         }
         let relative = path
             .strip_prefix(root)
@@ -2428,9 +2508,32 @@ fn collect_entity_text_files(root: &Path, dir: &Path) -> Result<BTreeMap<PathBuf
             path: path.clone(),
             source,
         })?;
+        *total_bytes = total_bytes
+            .checked_add(u64::try_from(contents.len()).unwrap_or(u64::MAX))
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if *total_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
+        }
         files.insert(relative, contents);
     }
-    Ok(files)
+    Ok(())
+}
+
+fn symlink_entity_error(path: &Path) -> PipelineError {
+    PipelineError::EntityFormat {
+        path: path.to_path_buf(),
+        message: "symlinked entity path is not supported".to_string(),
+    }
+}
+
+fn entity_limit_error(path: &Path, message: impl Into<String>) -> PipelineError {
+    PipelineError::EntityFormat {
+        path: path.to_path_buf(),
+        message: message.into(),
+    }
 }
 
 fn canonicalize_for_candidate(
@@ -3935,6 +4038,37 @@ schema: 1
             Err(error) => panic!("emitted skill should hash: {error}"),
         };
         assert_eq!(emitted, &actual);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entity_file_collection_rejects_symlinked_paths() {
+        use std::os::unix::fs::symlink;
+
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path().join("skill");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("skill directory should be created: {error}");
+        }
+        if let Err(error) = fs::write(root.join("SKILL.md"), "content") {
+            panic!("skill file should be written: {error}");
+        }
+        if let Err(error) = fs::write(temp.path().join("outside.txt"), "outside") {
+            panic!("outside file should be written: {error}");
+        }
+        if let Err(error) = symlink(temp.path().join("outside.txt"), root.join("outside.txt")) {
+            panic!("symlink should be created: {error}");
+        }
+
+        let error = match super::collect_entity_text_files(&root, &root) {
+            Ok(_) => panic!("symlinked entity path should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("symlinked entity path"));
     }
 
     #[test]

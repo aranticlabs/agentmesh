@@ -13,9 +13,9 @@ cargo-fuzz = true
 resolver = "3"
 
 [dependencies]
-agentmesh-adapter-sdk-rust = { path = "../crates/agentmesh-adapter-sdk-rust", version = "0.1.0" }
-agentmesh-core = { path = "../crates/agentmesh-core", version = "0.1.0" }
-agentmesh-protocol = { path = "../crates/agentmesh-protocol", version = "0.1.0" }
+agentmesh-adapter-sdk-rust = { path = "../crates/agentmesh-adapter-sdk-rust", version = "0.1.2" }
+agentmesh-core = { path = "../crates/agentmesh-core", version = "0.1.2" }
+agentmesh-protocol = { path = "../crates/agentmesh-protocol", version = "0.1.2" }
 libfuzzer-sys = "0.4"
 serde_norway = "0.9.42"
 

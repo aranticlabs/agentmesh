@@ -1,12 +1,12 @@
 //! Bundled Claude adapter entry points.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentmesh_adapter_sdk_rust::{
-    Adapter, AdapterError, AdapterMetadata, FormatTranslation, compose_frontmatter,
-    ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files, is_safe_relative,
+    Adapter, AdapterError, AdapterMetadata, FormatTranslation, collect_entity_files,
+    compose_frontmatter, dir_entry_file_type, ensure_hook_array, find_hook_array_mut,
+    find_hook_group, hash_files, is_regular_dir, is_regular_file, is_safe_relative,
     max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted, read_json_object,
     read_to_string, remove_matching_entries, remove_recorded_entries, selected, sha256_bytes,
     skipped_entity, slug_for_entity, slugify, workspace_relative, workspace_root_for, write_atomic,
@@ -71,7 +71,9 @@ impl Adapter for ClaudeAdapter {
         let mut skipped = Vec::new();
 
         let instructions_path = workspace_root.join("CLAUDE.md");
-        if selected(filter, &[PathBuf::from("CLAUDE.md")]) && instructions_path.is_file() {
+        if selected(filter, &[PathBuf::from("CLAUDE.md")])
+            && is_regular_file(&workspace_root, &instructions_path)?
+        {
             entities.push(import_markdown_entity(
                 &workspace_root,
                 &instructions_path,
@@ -321,13 +323,29 @@ fn import_skills(
     entities: &mut Vec<ImportedEntity>,
     skipped: &mut Vec<SkippedPath>,
 ) -> agentmesh_adapter_sdk_rust::Result<()> {
-    if !skills_root.is_dir() {
-        return Ok(());
+    match is_regular_dir(workspace_root, skills_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, skills_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
     }
 
     for entry in read_dir_sorted(skills_root)? {
         let path = entry.path();
-        if !path.is_dir() {
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked skill path is not supported".to_string(),
+            });
+            continue;
+        }
+        if !file_type.is_dir() {
             continue;
         }
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -348,13 +366,32 @@ fn import_skills(
         let source_path = path.join("SKILL.md");
         let source_relative = workspace_relative(workspace_root, &source_path)?;
         let skill_relative = workspace_relative(workspace_root, &path)?;
-        if !selected(filter, &[source_relative.clone(), skill_relative]) || !source_path.is_file() {
+        if !selected(filter, &[source_relative.clone(), skill_relative]) {
+            continue;
+        }
+        let source_is_file = match is_regular_file(workspace_root, &source_path) {
+            Ok(source_is_file) => source_is_file,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: source_relative,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        if !source_is_file {
             continue;
         }
 
         let slug = slugify(name);
         let mut files = BTreeMap::new();
-        collect_entity_files(&path, &path, &mut files)?;
+        if let Err(error) = collect_entity_files(&path, &path, &mut files) {
+            skipped.push(SkippedPath {
+                path: workspace_relative(workspace_root, &path)?,
+                reason: error.to_string(),
+            });
+            continue;
+        }
         let content = read_to_string(&source_path)?;
         let frontmatter = match frontmatter_json_for_path(&source_relative, &content) {
             Ok(frontmatter) => frontmatter,
@@ -383,6 +420,10 @@ fn import_skills(
     Ok(())
 }
 
+fn relative_or_path(workspace_root: &Path, path: &Path) -> PathBuf {
+    workspace_relative(workspace_root, path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn import_subagents(
     workspace_root: &Path,
     agents_root: &Path,
@@ -390,13 +431,31 @@ fn import_subagents(
     entities: &mut Vec<ImportedEntity>,
     skipped: &mut Vec<SkippedPath>,
 ) -> agentmesh_adapter_sdk_rust::Result<()> {
-    if !agents_root.is_dir() {
-        return Ok(());
+    match is_regular_dir(workspace_root, agents_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, agents_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
     }
 
     for entry in read_dir_sorted(agents_root)? {
         let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked subagent path is not supported".to_string(),
+            });
+            continue;
+        }
+        if !file_type.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
             continue;
         }
         let source_relative = workspace_relative(workspace_root, &path)?;
@@ -469,32 +528,6 @@ fn import_markdown_entity(
             &workspace_root.join(path.strip_prefix(workspace_root).unwrap_or(path)),
         )?,
     })
-}
-
-fn collect_entity_files(
-    root: &Path,
-    dir: &Path,
-    files: &mut BTreeMap<PathBuf, EntityFile>,
-) -> agentmesh_adapter_sdk_rust::Result<()> {
-    for entry in read_dir_sorted(dir)? {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_entity_files(root, &path, files)?;
-            continue;
-        }
-        if !path.is_file() {
-            continue;
-        }
-        let relative = path.strip_prefix(root).map_err(|_| {
-            AdapterError::rpc(
-                AdapterErrorCode::WorkspaceOutsideBound,
-                format!("{} is outside {}", path.display(), root.display()),
-            )
-        })?;
-        files.insert(relative.to_path_buf(), read_entity_file(&path)?);
-    }
-
-    Ok(())
 }
 
 fn first_file_content(files: &BTreeMap<PathBuf, EntityFile>) -> Option<String> {
@@ -592,16 +625,6 @@ fn skill_runtime_file(path: &Path, slug: &str) -> Option<PathBuf> {
         return Some(stripped.to_path_buf());
     }
     Some(path.to_path_buf())
-}
-
-fn read_entity_file(path: &Path) -> agentmesh_adapter_sdk_rust::Result<EntityFile> {
-    fs::read(path)
-        .map(EntityFile::from_bytes)
-        .map_err(|source| AdapterError::Io {
-            action: "read file",
-            path: path.to_path_buf(),
-            source,
-        })
 }
 
 fn file_text(file: &EntityFile) -> Option<String> {

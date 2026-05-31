@@ -2646,6 +2646,11 @@ fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> Result<()> 
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(CliError::from_io(error)),
     };
+    let existing_mode = if existing.is_some() {
+        file_mode(&hook)?
+    } else {
+        None
+    };
     let existing_is_agentmesh = existing
         .as_deref()
         .is_some_and(|content| content.contains(GIT_PRE_COMMIT_MARKER));
@@ -2672,16 +2677,18 @@ fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> Result<()> 
                     AgentmeshExitCode::Usage,
                 ));
             }
-            write_text_atomic(&saved, content)?;
-            make_executable(&saved)?;
+            write_text_atomic_with_mode(&saved, content, existing_mode)?;
             true
         }
     } else {
         false
     };
 
-    write_text_atomic(&hook, &git_pre_commit_body(&binary_path, chain_original))?;
-    make_executable(&hook)?;
+    write_text_atomic_with_mode(
+        &hook,
+        &git_pre_commit_body(&binary_path, chain_original),
+        hook_wrapper_mode(existing_mode),
+    )?;
     record_git_pre_commit_ownership(context, chain_original)?;
 
     if !context.silent {
@@ -2820,8 +2827,12 @@ fn rewrite_git_pre_commit_hook(context: &CliContext) -> Result<()> {
     }
     let binary_path = std::env::current_exe().map_err(CliError::from_io)?;
     let saved = context.repo_root.join(GIT_PRE_COMMIT_SAVED);
-    write_text_atomic(&hook, &git_pre_commit_body(&binary_path, saved.exists()))?;
-    make_executable(&hook)
+    let existing_mode = file_mode(&hook)?;
+    write_text_atomic_with_mode(
+        &hook,
+        &git_pre_commit_body(&binary_path, saved.exists()),
+        hook_wrapper_mode(existing_mode),
+    )
 }
 
 fn print_codex_trust_prompt(context: &CliContext, hooks: &[agentmesh_protocol::InstalledHook]) {
@@ -2996,7 +3007,6 @@ fn uninstall_git_pre_commit_hook(
 
     if saved.exists() {
         fs::rename(&saved, &hook).map_err(CliError::from_io)?;
-        make_executable(&hook)?;
         if !context.silent {
             println!(
                 "    {} Restored original git pre-commit hook",
@@ -3236,7 +3246,7 @@ fn shell_quote_path(path: &Path) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn write_text_atomic(path: &Path, content: &str) -> Result<()> {
+fn write_text_atomic_with_mode(path: &Path, content: &str, mode: Option<u32>) -> Result<()> {
     let Some(parent) = path.parent() else {
         return Err(CliError::new(
             format!("cannot resolve parent directory for {}", path.display()),
@@ -3246,23 +3256,55 @@ fn write_text_atomic(path: &Path, content: &str) -> Result<()> {
     fs::create_dir_all(parent).map_err(CliError::from_io)?;
     let temp = parent.join(format!(".agentmesh-{}.tmp", std::process::id()));
     fs::write(&temp, content).map_err(CliError::from_io)?;
+    set_file_mode(&temp, mode)?;
     fs::rename(&temp, path).map_err(CliError::from_io)
 }
 
-fn make_executable(path: &Path) -> Result<()> {
+fn file_mode(path: &Path) -> Result<Option<u32>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
         let metadata = fs::metadata(path).map_err(CliError::from_io)?;
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(permissions.mode() | 0o755);
-        fs::set_permissions(path, permissions).map_err(CliError::from_io)?;
+        Ok(Some(metadata.permissions().mode() & 0o777))
     }
 
     #[cfg(not(unix))]
     {
         let _ = path;
+        Ok(None)
+    }
+}
+
+fn hook_wrapper_mode(existing_mode: Option<u32>) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        Some(existing_mode.unwrap_or(0o600) | 0o100)
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = existing_mode;
+        None
+    }
+}
+
+fn set_file_mode(path: &Path, mode: Option<u32>) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(mode) = mode {
+            let mut permissions = fs::metadata(path).map_err(CliError::from_io)?.permissions();
+            permissions.set_mode(mode);
+            fs::set_permissions(path, permissions).map_err(CliError::from_io)?;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        let _ = mode;
     }
 
     Ok(())
