@@ -1921,6 +1921,7 @@ fn snapshot_exit_code(snapshot: &RepoSnapshot) -> AgentmeshExitCode {
                 || health.capability_skips > 0
                 || health.pending_conflicts > 0
                 || health.pending_syncs > 0
+                || health.lockfile_privacy_warnings > 0
         })
     {
         AgentmeshExitCode::Drift
@@ -2274,6 +2275,7 @@ fn core_health_json(health: Option<&agentmesh_core::DoctorHealth>) -> serde_json
             "pending_syncs": health.pending_syncs,
             "failed_pending_syncs": health.failed_pending_syncs,
             "capability_skips": health.capability_skips,
+            "lockfile_privacy_warnings": health.lockfile_privacy_warnings,
         }),
         None => serde_json::Value::Null,
     }

@@ -19,6 +19,7 @@ use agentmesh_protocol::{
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::{
@@ -50,6 +51,8 @@ use crate::{
 
 /// Pipeline result type.
 pub type Result<T> = std::result::Result<T, PipelineError>;
+
+const DOCTOR_PRIVACY_WARNING_DETAIL_LIMIT: usize = 20;
 
 /// Runtime adapter operations required by the sync pipeline.
 pub trait AdapterRegistry {
@@ -443,6 +446,7 @@ pub fn doctor_with_adapter_registry(
     let config = load_config(repo_root)?.config;
     let capability_skipped = capability_skip_count_for_lockfile(&lockfile, &config)?;
     let sync_state = entity_sync_state(repo_root, &lockfile)?;
+    let privacy_findings = doctor_lockfile_privacy_findings(&lockfile);
 
     let mut findings = Vec::new();
     findings.push(format!("entities: {}", lockfile.entities.len()));
@@ -458,6 +462,7 @@ pub fn doctor_with_adapter_registry(
     findings.extend(doctor_adapter_findings(repo_root, &lockfile, adapters)?);
     findings.extend(doctor_hook_findings(repo_root, &cache)?);
     findings.extend(doctor_conflict_findings(&cache, &lockfile)?);
+    findings.extend(privacy_findings.findings);
     findings.push(format!("watcher_pid: {}", cache.watcher_pid.display()));
     findings.push(format!("watcher_log: {}", cache.watcher_log.display()));
     findings.push("network: disabled".to_string());
@@ -470,8 +475,226 @@ pub fn doctor_with_adapter_registry(
             pending_syncs: pending_count,
             failed_pending_syncs: failed_pending_count,
             capability_skips: capability_skipped,
+            lockfile_privacy_warnings: privacy_findings.warning_count,
         },
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LockfilePrivacyFindings {
+    warning_count: usize,
+    findings: Vec<String>,
+}
+
+fn doctor_lockfile_privacy_findings(lockfile: &Lockfile) -> LockfilePrivacyFindings {
+    let mut warnings = Vec::new();
+    let mut warning_count = 0;
+
+    for (entity_id, entity) in &lockfile.entities {
+        if contains_sensitive_term(entity_id.as_str()) {
+            push_privacy_warning(
+                &mut warnings,
+                &mut warning_count,
+                format!(
+                    "entity id `{}` contains sensitive-looking text",
+                    entity_id.as_str()
+                ),
+            );
+        }
+        for (location, path) in &entity.locations {
+            if path_contains_sensitive_term(path) {
+                push_privacy_warning(
+                    &mut warnings,
+                    &mut warning_count,
+                    format!(
+                        "location path for `{}` at `{}` contains sensitive-looking text: {}",
+                        entity_id.as_str(),
+                        location.as_str(),
+                        path.display()
+                    ),
+                );
+            }
+        }
+        for entry in &entity.lineage {
+            if path_contains_sensitive_term(&entry.imported_from) {
+                push_privacy_warning(
+                    &mut warnings,
+                    &mut warning_count,
+                    format!(
+                        "lineage path for `{}` contains sensitive-looking text: {}",
+                        entity_id.as_str(),
+                        entry.imported_from.display()
+                    ),
+                );
+            }
+        }
+        for record in &entity.rename_history {
+            if path_contains_sensitive_term(&record.from) {
+                push_privacy_warning(
+                    &mut warnings,
+                    &mut warning_count,
+                    format!(
+                        "rename source for `{}` contains sensitive-looking text: {}",
+                        entity_id.as_str(),
+                        record.from.display()
+                    ),
+                );
+            }
+            if path_contains_sensitive_term(&record.to) {
+                push_privacy_warning(
+                    &mut warnings,
+                    &mut warning_count,
+                    format!(
+                        "rename target for `{}` contains sensitive-looking text: {}",
+                        entity_id.as_str(),
+                        record.to.display()
+                    ),
+                );
+            }
+        }
+    }
+
+    for (entity_id, overrides) in &lockfile.overrides {
+        for (runtime, override_entry) in overrides {
+            collect_sensitive_override_keys(
+                entity_id,
+                runtime,
+                &override_entry.0,
+                &mut warnings,
+                &mut warning_count,
+            );
+        }
+    }
+
+    let mut findings = Vec::new();
+    if warning_count > 0 {
+        findings.push(format!("lockfile_privacy_warnings: {warning_count}"));
+    }
+    findings.extend(warnings);
+    if warning_count > DOCTOR_PRIVACY_WARNING_DETAIL_LIMIT {
+        findings.push(format!(
+            "lockfile_privacy_warnings_truncated: {} additional warning(s)",
+            warning_count - DOCTOR_PRIVACY_WARNING_DETAIL_LIMIT
+        ));
+    }
+
+    LockfilePrivacyFindings {
+        warning_count,
+        findings,
+    }
+}
+
+fn push_privacy_warning(warnings: &mut Vec<String>, warning_count: &mut usize, detail: String) {
+    *warning_count += 1;
+    if warnings.len() < DOCTOR_PRIVACY_WARNING_DETAIL_LIMIT {
+        warnings.push(format!(
+            "lockfile_privacy_warning_{warning_count}: {detail}"
+        ));
+    }
+}
+
+fn collect_sensitive_override_keys(
+    entity_id: &EntityId,
+    runtime: &RuntimeName,
+    values: &BTreeMap<String, Value>,
+    warnings: &mut Vec<String>,
+    warning_count: &mut usize,
+) {
+    for (key, value) in values {
+        collect_sensitive_json_keys(
+            entity_id,
+            runtime,
+            Some(key),
+            value,
+            warnings,
+            warning_count,
+        );
+    }
+}
+
+fn collect_sensitive_json_keys(
+    entity_id: &EntityId,
+    runtime: &RuntimeName,
+    key: Option<&str>,
+    value: &Value,
+    warnings: &mut Vec<String>,
+    warning_count: &mut usize,
+) {
+    if let Some(key) = key
+        && contains_sensitive_term(key)
+    {
+        push_privacy_warning(
+            warnings,
+            warning_count,
+            format!(
+                "override key `{key}` for `{}` at `{}` looks sensitive; keep secrets in machine-local config or environment variables",
+                entity_id.as_str(),
+                runtime.as_str()
+            ),
+        );
+    }
+
+    match value {
+        Value::Object(map) => {
+            for (child_key, child_value) in map {
+                collect_sensitive_json_keys(
+                    entity_id,
+                    runtime,
+                    Some(child_key),
+                    child_value,
+                    warnings,
+                    warning_count,
+                );
+            }
+        }
+        Value::Array(values) => {
+            for child_value in values {
+                collect_sensitive_json_keys(
+                    entity_id,
+                    runtime,
+                    None,
+                    child_value,
+                    warnings,
+                    warning_count,
+                );
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn path_contains_sensitive_term(path: &Path) -> bool {
+    path.components()
+        .any(|component| contains_sensitive_term(&component.as_os_str().to_string_lossy()))
+}
+
+fn contains_sensitive_term(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    [
+        "access-key",
+        "access_key",
+        "apikey",
+        "api-key",
+        "api_key",
+        "auth-token",
+        "auth_token",
+        "bearer",
+        "client-secret",
+        "client_secret",
+        "cookie",
+        "credential",
+        "jwt",
+        "oauth",
+        "passwd",
+        "password",
+        "private-key",
+        "private_key",
+        "secret",
+        "session",
+        "token",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -3491,8 +3714,8 @@ mod tests {
 
     use super::{PlanOptions, capability_skip_count_for_lockfile};
     use crate::lockfile::{
-        AdapterDeclaration, AdapterMode, HookKind, Lockfile, LockfileEntity, read_lockfile,
-        write_lockfile,
+        AdapterDeclaration, AdapterMode, HookKind, Lockfile, LockfileEntity, OverrideEntry,
+        read_lockfile, write_lockfile,
     };
     use crate::merge::preserve_losing_version;
     use crate::pending_queue::PendingQueue;
@@ -4613,6 +4836,64 @@ schema: 1
         assert_eq!(report.health.pending_syncs, 0);
         assert_eq!(report.health.failed_pending_syncs, 0);
         assert_eq!(report.health.capability_skips, 0);
+        assert_eq!(report.health.lockfile_privacy_warnings, 0);
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.starts_with("lockfile_privacy"))
+        );
+    }
+
+    #[test]
+    fn doctor_warns_about_sensitive_lockfile_metadata() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let repo = temp.path().join("repo");
+        if let Err(error) = fs::create_dir_all(&repo) {
+            panic!("repo should be created: {error}");
+        }
+        let mut lockfile = Lockfile::empty();
+        let mut entity = entity_entry(
+            EntityType::Subagent,
+            hash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        );
+        entity.locations.insert(
+            location_key(".ai"),
+            std::path::PathBuf::from("subagents/service-token.md"),
+        );
+        let entity_id = entity_id("subagent:service-token");
+        lockfile.entities.insert(entity_id.clone(), entity);
+        lockfile.overrides.insert(
+            entity_id,
+            std::collections::BTreeMap::from([(
+                runtime_name("codex"),
+                OverrideEntry(std::collections::BTreeMap::from([(
+                    "api_token".to_string(),
+                    serde_json::json!("redacted"),
+                )])),
+            )]),
+        );
+        if let Err(error) = write_lockfile(&repo, &lockfile) {
+            panic!("lockfile should write: {error}");
+        }
+
+        let report = match doctor(&repo) {
+            Ok(report) => report,
+            Err(error) => panic!("doctor should succeed: {error}"),
+        };
+
+        assert!(report.health.lockfile_privacy_warnings >= 2);
+        assert!(report.findings.iter().any(|finding| {
+            finding.starts_with("lockfile_privacy_warning_")
+                && finding.contains("entity id `subagent:service-token`")
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.starts_with("lockfile_privacy_warning_")
+                && finding.contains("override key `api_token`")
+        }));
     }
 
     #[test]

@@ -120,6 +120,8 @@ pub struct DoctorHealth {
     pub failed_pending_syncs: usize,
     /// Number of entities skipped because no runtime can represent them.
     pub capability_skips: usize,
+    /// Number of sensitive-looking lockfile metadata entries.
+    pub lockfile_privacy_warnings: usize,
 }
 
 /// Options for restoring a preserved entity version.
