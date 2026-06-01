@@ -1277,7 +1277,19 @@ fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
     let original = "#!/bin/sh\necho user-hook\n";
-    write(repo.join(".git/hooks/pre-commit"), original);
+    let original_hook = repo.join(".git/hooks/pre-commit");
+    write(&original_hook, original);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&original_hook)
+            .unwrap_or_else(|error| panic!("original hook metadata should be readable: {error}"))
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(&original_hook, permissions)
+            .unwrap_or_else(|error| panic!("original hook permissions should be set: {error}"));
+    }
 
     let install = run_agentmesh(
         &repo,
@@ -1292,6 +1304,23 @@ fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
     assert!(contents.contains("pre-commit.agentmesh-saved"));
     assert!(contents.contains("git-pre-commit"));
     assert_eq!(read(&saved), original);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let saved_mode = fs::metadata(&saved)
+            .unwrap_or_else(|error| panic!("saved hook metadata should be readable: {error}"))
+            .permissions()
+            .mode()
+            & 0o777;
+        let wrapper_mode = fs::metadata(&hook)
+            .unwrap_or_else(|error| panic!("wrapper hook metadata should be readable: {error}"))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(saved_mode, 0o600);
+        assert_eq!(wrapper_mode, 0o700);
+    }
 
     let ownership = match find_named_file(&cache, "hook-ownership.json") {
         Some(path) => read(path),
@@ -1304,6 +1333,17 @@ fn git_pre_commit_install_chains_and_uninstall_restores_existing_hook() {
     assert_success(&uninstall);
     assert_eq!(read(&hook), original);
     assert!(!saved.exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let restored_mode = fs::metadata(&hook)
+            .unwrap_or_else(|error| panic!("restored hook metadata should be readable: {error}"))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(restored_mode, 0o600);
+    }
 }
 
 #[test]

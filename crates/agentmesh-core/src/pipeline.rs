@@ -19,6 +19,7 @@ use agentmesh_protocol::{
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::{
@@ -48,8 +49,15 @@ use crate::{
     UninstallSummary, UpgradeSummary, VERSION,
 };
 
+mod doctor;
+pub use doctor::{doctor, doctor_with_adapter_registry};
+
 /// Pipeline result type.
 pub type Result<T> = std::result::Result<T, PipelineError>;
+
+const MAX_ENTITY_TREE_DEPTH: usize = 32;
+const MAX_ENTITY_FILE_COUNT: usize = 1024;
+const MAX_ENTITY_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Runtime adapter operations required by the sync pipeline.
 pub trait AdapterRegistry {
@@ -421,171 +429,6 @@ pub fn uninstall(repo_root: &Path, opts: UninstallOptions) -> Result<UninstallSu
 }
 
 /// Builds a health report from core state.
-pub fn doctor(repo_root: &Path) -> Result<DoctorReport> {
-    doctor_with_adapter_registry(repo_root, &SubprocessAdapterRegistry)
-}
-
-/// Builds a health report with an explicit adapter registry.
-pub fn doctor_with_adapter_registry(
-    repo_root: &Path,
-    adapters: &dyn AdapterRegistry,
-) -> Result<DoctorReport> {
-    let cache = CacheLayout::new(&default_cache_root()?, repo_root)?;
-    let lockfile = read_lockfile_or_empty(repo_root)?;
-    let pending_queue = PendingQueue::new(&cache.pending_syncs_dir);
-    let pending_count = pending_queue.read_ready()?.len();
-    let failed_pending_count = failed_pending_records(&cache.pending_syncs_dir)?;
-    let pending_conflicts = lockfile
-        .entities
-        .values()
-        .filter(|entry| entry.pending_conflict_resolution == Some(true))
-        .count();
-    let config = load_config(repo_root)?.config;
-    let capability_skipped = capability_skip_count_for_lockfile(&lockfile, &config)?;
-    let sync_state = entity_sync_state(repo_root, &lockfile)?;
-
-    let mut findings = Vec::new();
-    findings.push(format!("entities: {}", lockfile.entities.len()));
-    findings.push(format!("entities_in_sync: {}", sync_state.in_sync));
-    findings.push(format!("entities_out_of_sync: {}", sync_state.out_of_sync));
-    findings.push(format!("pending_conflicts: {pending_conflicts}"));
-    findings.push(format!("pending_syncs: {pending_count}"));
-    findings.push(format!("failed_pending_syncs: {failed_pending_count}"));
-    findings.extend(doctor_pending_failure_findings(&cache.pending_syncs_dir)?);
-    findings.push(format!("capability_skips: {capability_skipped}"));
-    findings.push(format!("cache_root: {}", cache.root.display()));
-    findings.extend(doctor_integrity_findings(repo_root, &cache)?);
-    findings.extend(doctor_adapter_findings(repo_root, &lockfile, adapters)?);
-    findings.extend(doctor_hook_findings(repo_root, &cache)?);
-    findings.extend(doctor_conflict_findings(&cache, &lockfile)?);
-    findings.push(format!("watcher_pid: {}", cache.watcher_pid.display()));
-    findings.push(format!("watcher_log: {}", cache.watcher_log.display()));
-    findings.push("network: disabled".to_string());
-
-    Ok(DoctorReport {
-        findings,
-        health: DoctorHealth {
-            entities_out_of_sync: sync_state.out_of_sync,
-            pending_conflicts,
-            pending_syncs: pending_count,
-            failed_pending_syncs: failed_pending_count,
-            capability_skips: capability_skipped,
-        },
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct EntitySyncState {
-    in_sync: usize,
-    out_of_sync: usize,
-}
-
-fn failed_pending_records(dir: &Path) -> Result<usize> {
-    let mut count = 0;
-    match fs::read_dir(dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.map_err(|source| PipelineError::Io {
-                    action: "read directory entry",
-                    path: dir.to_path_buf(),
-                    source,
-                })?;
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with("failed-"))
-                {
-                    count += 1;
-                }
-            }
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(PipelineError::Io {
-                action: "read directory",
-                path: dir.to_path_buf(),
-                source,
-            });
-        }
-    }
-    Ok(count)
-}
-
-fn doctor_pending_failure_findings(dir: &Path) -> Result<Vec<String>> {
-    let mut findings = Vec::new();
-    match fs::read_dir(dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.map_err(|source| PipelineError::Io {
-                    action: "read directory entry",
-                    path: dir.to_path_buf(),
-                    source,
-                })?;
-                let path = entry.path();
-                if !entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with("failed-"))
-                {
-                    continue;
-                }
-                let record = read_json::<PendingSyncRecord>(&path)?;
-                findings.push(format!(
-                    "pending_failure_{}: path={} attempts={} error={}",
-                    record.pending_id,
-                    path.display(),
-                    record.attempts,
-                    record.last_error.as_deref().unwrap_or("unknown")
-                ));
-            }
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(PipelineError::Io {
-                action: "read directory",
-                path: dir.to_path_buf(),
-                source,
-            });
-        }
-    }
-    findings.sort();
-    Ok(findings)
-}
-
-fn entity_sync_state(repo_root: &Path, lockfile: &Lockfile) -> Result<EntitySyncState> {
-    let mut state = EntitySyncState::default();
-    for entity in lockfile.entities.values() {
-        let mut out_of_sync = entity.locations.is_empty();
-        for (location, path) in &entity.locations {
-            let Some(expected_hash) = entity.emitted_native_sha256.get(location).or_else(|| {
-                if location.as_str() == ".ai" {
-                    Some(&entity.canonical_sha256)
-                } else {
-                    None
-                }
-            }) else {
-                out_of_sync = true;
-                continue;
-            };
-            let Some(actual_hash) =
-                entity_location_hash(repo_root, entity.entity_type, location, path)?
-            else {
-                out_of_sync = true;
-                continue;
-            };
-            if &actual_hash != expected_hash {
-                out_of_sync = true;
-            }
-        }
-        if out_of_sync {
-            state.out_of_sync += 1;
-        } else {
-            state.in_sync += 1;
-        }
-    }
-    Ok(state)
-}
-
 fn entity_location_hash(
     repo_root: &Path,
     entity_type: EntityType,
@@ -593,7 +436,7 @@ fn entity_location_hash(
     lockfile_path: &Path,
 ) -> Result<Option<Hash>> {
     let absolute_path = path_from_lockfile(repo_root, location, lockfile_path);
-    if !absolute_path.exists() {
+    if !is_regular_file_path(&absolute_path)? {
         return Ok(None);
     }
     if entity_type != EntityType::Skill {
@@ -602,264 +445,11 @@ fn entity_location_hash(
     let Some(root) = absolute_path.parent() else {
         return Ok(None);
     };
-    if !root.is_dir() {
+    if !is_regular_dir_path(root)? {
         return Ok(None);
     }
     let files = collect_entity_text_files(root, root)?;
     hash_entity_files(&files).map(Some)
-}
-
-fn doctor_integrity_findings(repo_root: &Path, cache: &CacheLayout) -> Result<Vec<String>> {
-    let current = current_integrity_pin(repo_root)?;
-    match read_integrity_pin(&cache.integrity_json) {
-        Ok(pin) => {
-            let mode = if pin.binary_path.is_absolute() {
-                "pinned-absolute"
-            } else {
-                "path-resolved"
-            };
-            let status = if pin.binary_path == current.binary_path
-                && pin.binary_sha256 == current.binary_sha256
-            {
-                "match"
-            } else {
-                "mismatch"
-            };
-            Ok(vec![
-                format!("integrity: {status}"),
-                format!("integrity_mode: {mode}"),
-                format!("integrity_pinned_binary: {}", pin.binary_path.display()),
-                format!("integrity_pinned_sha256: {}", pin.binary_sha256.as_str()),
-                format!(
-                    "integrity_current_binary: {}",
-                    current.binary_path.display()
-                ),
-                format!(
-                    "integrity_current_sha256: {}",
-                    current.binary_sha256.as_str()
-                ),
-                format!("integrity_version: {}", pin.binary_version),
-            ])
-        }
-        Err(StateError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-            Ok(vec![
-                "integrity: unpinned".to_string(),
-                format!(
-                    "integrity_current_binary: {}",
-                    current.binary_path.display()
-                ),
-                format!(
-                    "integrity_current_sha256: {}",
-                    current.binary_sha256.as_str()
-                ),
-            ])
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn doctor_adapter_findings(
-    repo_root: &Path,
-    lockfile: &Lockfile,
-    adapters: &dyn AdapterRegistry,
-) -> Result<Vec<String>> {
-    let markers = detect_runtime_markers(repo_root, adapters)?;
-    let known = [
-        (runtime_name("claude")?, markers.claude),
-        (runtime_name("codex")?, markers.codex),
-    ];
-    let mut findings = Vec::new();
-    let mut known_runtimes = BTreeSet::new();
-    for (runtime, detected) in &known {
-        known_runtimes.insert(runtime.clone());
-        if let Some(adapter) = lockfile.adapters.get(runtime) {
-            findings.push(format!(
-                "adapter_{}: detected={} declared=true mode={} protocol={} entities={} hooks={}",
-                runtime.as_str(),
-                detected,
-                adapter_mode_name(adapter.mode),
-                adapter.protocol_version,
-                adapter.entities.len(),
-                adapter.hooks.len()
-            ));
-        } else {
-            findings.push(format!(
-                "adapter_{}: detected={} declared=false",
-                runtime.as_str(),
-                detected
-            ));
-        }
-    }
-    findings.extend(
-        lockfile
-        .adapters
-        .iter()
-            .filter(|(runtime, _)| !known_runtimes.contains(*runtime))
-            .map(|(runtime, adapter)| {
-            format!(
-                    "adapter_{}: detected=false declared=true mode={} protocol={} entities={} hooks={}",
-                runtime.as_str(),
-                adapter_mode_name(adapter.mode),
-                adapter.protocol_version,
-                    adapter.entities.len(),
-                    adapter.hooks.len()
-            )
-            }),
-    );
-    for entity_type in [
-        EntityType::Instructions,
-        EntityType::Skill,
-        EntityType::Subagent,
-    ] {
-        let runtimes = lockfile
-            .adapters
-            .iter()
-            .filter(|(_, adapter)| adapter.entities.contains(&entity_type))
-            .map(|(runtime, _)| runtime.as_str())
-            .collect::<Vec<_>>();
-        let coverage = if runtimes.is_empty() {
-            "none".to_string()
-        } else {
-            runtimes.join(",")
-        };
-        findings.push(format!(
-            "adapter_coverage_{}: {coverage}",
-            entity_type.as_str()
-        ));
-    }
-    if lockfile.adapters.is_empty() {
-        findings.push("adapters: none".to_string());
-    }
-    Ok(findings)
-}
-
-fn adapter_mode_name(mode: AdapterMode) -> &'static str {
-    match mode {
-        AdapterMode::Bundled => "bundled",
-    }
-}
-
-fn doctor_hook_findings(repo_root: &Path, cache: &CacheLayout) -> Result<Vec<String>> {
-    match read_hook_ownership(&cache.hook_ownership_json) {
-        Ok(ownership) if ownership.0.is_empty() => Ok(vec!["hooks: none".to_string()]),
-        Ok(ownership) => Ok(ownership
-            .0
-            .iter()
-            .map(|(runtime, entry)| {
-                let overlay = repo_root.join(&entry.overlay_file);
-                let overlay_exists = overlay.is_file();
-                let command_present = if overlay_exists {
-                    fs::read_to_string(&overlay)
-                        .map(|contents| {
-                            contents.contains("agentmesh")
-                                && contents.contains(&format!("{}-hook", runtime.as_str()))
-                        })
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-                let drift = !overlay_exists || entry.entry_paths.is_empty() || !command_present;
-                format!(
-                    "hook_{}: overlay={} entries={} exists={} command_present={} drift={}",
-                    runtime.as_str(),
-                    entry.overlay_file.display(),
-                    entry.entry_paths.len(),
-                    overlay_exists,
-                    command_present,
-                    drift
-                )
-            })
-            .collect()),
-        Err(StateError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-            Ok(vec!["hooks: none".to_string()])
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn doctor_conflict_findings(cache: &CacheLayout, lockfile: &Lockfile) -> Result<Vec<String>> {
-    let mut preserved = 0;
-    match fs::read_dir(&cache.conflicts_dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.map_err(|source| PipelineError::Io {
-                    action: "read directory entry",
-                    path: cache.conflicts_dir.clone(),
-                    source,
-                })?;
-                if entry.path().is_dir() {
-                    preserved += 1;
-                }
-            }
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(PipelineError::Io {
-                action: "read directory",
-                path: cache.conflicts_dir.clone(),
-                source,
-            });
-        }
-    }
-    let pending = lockfile
-        .entities
-        .values()
-        .filter(|entry| entry.pending_conflict_resolution == Some(true))
-        .count();
-    let mut findings = vec![
-        format!("preserved_conflict_entities: {preserved}"),
-        format!("pending_conflict_entities: {pending}"),
-    ];
-    for (entity_id, entity) in &lockfile.entities {
-        if entity.pending_conflict_resolution != Some(true) {
-            continue;
-        }
-        let preserved_paths = preserved_conflict_paths(cache, entity_id)?;
-        let preserved = if preserved_paths.is_empty() {
-            "none".to_string()
-        } else {
-            preserved_paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        };
-        findings.push(format!(
-            "conflict_{}: pending=true preserved={preserved}",
-            entity_id.as_str()
-        ));
-    }
-    Ok(findings)
-}
-
-fn preserved_conflict_paths(cache: &CacheLayout, entity_id: &EntityId) -> Result<Vec<PathBuf>> {
-    let dir = conflict_entity_dir(&cache.conflicts_dir, entity_id);
-    let mut paths = Vec::new();
-    match fs::read_dir(&dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.map_err(|source| PipelineError::Io {
-                    action: "read directory entry",
-                    path: dir.clone(),
-                    source,
-                })?;
-                let path = entry.path();
-                if path.is_file() {
-                    paths.push(path);
-                }
-            }
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(PipelineError::Io {
-                action: "read directory",
-                path: dir,
-                source,
-            });
-        }
-    }
-    paths.sort();
-    Ok(paths)
 }
 
 /// Restores the latest preserved losing version for an entity/runtime pair.
@@ -2048,7 +1638,7 @@ struct EntityCandidate {
 
 fn entity_candidates(repo_root: &Path) -> Result<Vec<EntityCandidate>> {
     let mut candidates = Vec::new();
-    if repo_root.join("AGENTS.md").is_file() {
+    if is_regular_file_path(&repo_root.join("AGENTS.md"))? {
         candidates.push(EntityCandidate {
             entity_type: EntityType::Instructions,
             location_key: location_key(".ai")?,
@@ -2078,16 +1668,16 @@ fn scan_skill_dir(
     candidates: &mut Vec<EntityCandidate>,
 ) -> Result<()> {
     let dir = repo_root.join(relative_dir);
-    if !dir.is_dir() {
+    if !is_regular_dir_path(&dir)? {
         return Ok(());
     }
 
     for entry in read_dir_sorted(&dir)? {
-        if !entry.is_dir() {
+        if !is_regular_dir_path(&entry)? {
             continue;
         }
         let skill_md = entry.join("SKILL.md");
-        if !skill_md.is_file() {
+        if !is_regular_file_path(&skill_md)? {
             continue;
         }
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
@@ -2113,12 +1703,12 @@ fn scan_subagent_dir(
     candidates: &mut Vec<EntityCandidate>,
 ) -> Result<()> {
     let dir = repo_root.join(relative_dir);
-    if !dir.is_dir() {
+    if !is_regular_dir_path(&dir)? {
         return Ok(());
     }
 
     for entry in read_dir_sorted(&dir)? {
-        if !entry.is_file() {
+        if !is_regular_file_path(&entry)? {
             continue;
         }
         if entry.extension().and_then(|value| value.to_str()) != Some(extension) {
@@ -2156,6 +1746,32 @@ fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(entries)
 }
 
+fn is_regular_file_path(path: &Path) -> Result<bool> {
+    Ok(safe_path_metadata(path)?.is_some_and(|metadata| metadata.is_file()))
+}
+
+fn is_regular_dir_path(path: &Path) -> Result<bool> {
+    Ok(safe_path_metadata(path)?.is_some_and(|metadata| metadata.is_dir()))
+}
+
+fn safe_path_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(PipelineError::Io {
+                action: "read metadata",
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(symlink_entity_error(path));
+    }
+    Ok(Some(metadata))
+}
+
 fn entity_files_for_candidate(
     repo_root: &Path,
     candidate: &EntityCandidate,
@@ -2188,13 +1804,64 @@ fn entity_files_for_candidate(
 
 fn collect_entity_text_files(root: &Path, dir: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     let mut files = BTreeMap::new();
+    let mut total_bytes = 0;
+    collect_entity_text_files_inner(root, dir, 0, &mut files, &mut total_bytes)?;
+    Ok(files)
+}
+
+fn collect_entity_text_files_inner(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    total_bytes: &mut u64,
+) -> Result<()> {
+    if depth > MAX_ENTITY_TREE_DEPTH {
+        return Err(entity_limit_error(
+            dir,
+            format!("entity directory depth exceeds {MAX_ENTITY_TREE_DEPTH}"),
+        ));
+    }
+
+    let dir_metadata = fs::symlink_metadata(dir).map_err(|source| PipelineError::Io {
+        action: "read metadata",
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    if dir_metadata.file_type().is_symlink() {
+        return Err(symlink_entity_error(dir));
+    }
+
     for path in read_dir_sorted(dir)? {
-        if path.is_dir() {
-            files.extend(collect_entity_text_files(root, &path)?);
+        let metadata = fs::symlink_metadata(&path).map_err(|source| PipelineError::Io {
+            action: "read metadata",
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(symlink_entity_error(&path));
+        }
+        if metadata.is_dir() {
+            collect_entity_text_files_inner(root, &path, depth + 1, files, total_bytes)?;
             continue;
         }
-        if !path.is_file() {
+        if !metadata.is_file() {
             continue;
+        }
+        if files.len() >= MAX_ENTITY_FILE_COUNT {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity file count exceeds {MAX_ENTITY_FILE_COUNT}"),
+            ));
+        }
+        let projected_bytes = total_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if projected_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
         }
         let relative = path
             .strip_prefix(root)
@@ -2205,9 +1872,32 @@ fn collect_entity_text_files(root: &Path, dir: &Path) -> Result<BTreeMap<PathBuf
             path: path.clone(),
             source,
         })?;
+        *total_bytes = total_bytes
+            .checked_add(u64::try_from(contents.len()).unwrap_or(u64::MAX))
+            .ok_or_else(|| entity_limit_error(&path, "entity byte count overflowed"))?;
+        if *total_bytes > MAX_ENTITY_TOTAL_BYTES {
+            return Err(entity_limit_error(
+                &path,
+                format!("entity byte size exceeds {MAX_ENTITY_TOTAL_BYTES}"),
+            ));
+        }
         files.insert(relative, contents);
     }
-    Ok(files)
+    Ok(())
+}
+
+fn symlink_entity_error(path: &Path) -> PipelineError {
+    PipelineError::EntityFormat {
+        path: path.to_path_buf(),
+        message: "symlinked entity path is not supported".to_string(),
+    }
+}
+
+fn entity_limit_error(path: &Path, message: impl Into<String>) -> PipelineError {
+    PipelineError::EntityFormat {
+        path: path.to_path_buf(),
+        message: message.into(),
+    }
 }
 
 fn canonicalize_for_candidate(
@@ -3491,8 +3181,8 @@ mod tests {
 
     use super::{PlanOptions, capability_skip_count_for_lockfile};
     use crate::lockfile::{
-        AdapterDeclaration, AdapterMode, HookKind, Lockfile, LockfileEntity, read_lockfile,
-        write_lockfile,
+        AdapterDeclaration, AdapterMode, HookKind, Lockfile, LockfileEntity, OverrideEntry,
+        read_lockfile, write_lockfile,
     };
     use crate::merge::preserve_losing_version;
     use crate::pending_queue::PendingQueue;
@@ -3712,6 +3402,37 @@ schema: 1
             Err(error) => panic!("emitted skill should hash: {error}"),
         };
         assert_eq!(emitted, &actual);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entity_file_collection_rejects_symlinked_paths() {
+        use std::os::unix::fs::symlink;
+
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path().join("skill");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("skill directory should be created: {error}");
+        }
+        if let Err(error) = fs::write(root.join("SKILL.md"), "content") {
+            panic!("skill file should be written: {error}");
+        }
+        if let Err(error) = fs::write(temp.path().join("outside.txt"), "outside") {
+            panic!("outside file should be written: {error}");
+        }
+        if let Err(error) = symlink(temp.path().join("outside.txt"), root.join("outside.txt")) {
+            panic!("symlink should be created: {error}");
+        }
+
+        let error = match super::collect_entity_text_files(&root, &root) {
+            Ok(_) => panic!("symlinked entity path should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("symlinked entity path"));
     }
 
     #[test]
@@ -4613,6 +4334,64 @@ schema: 1
         assert_eq!(report.health.pending_syncs, 0);
         assert_eq!(report.health.failed_pending_syncs, 0);
         assert_eq!(report.health.capability_skips, 0);
+        assert_eq!(report.health.lockfile_privacy_warnings, 0);
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.starts_with("lockfile_privacy"))
+        );
+    }
+
+    #[test]
+    fn doctor_warns_about_sensitive_lockfile_metadata() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let repo = temp.path().join("repo");
+        if let Err(error) = fs::create_dir_all(&repo) {
+            panic!("repo should be created: {error}");
+        }
+        let mut lockfile = Lockfile::empty();
+        let mut entity = entity_entry(
+            EntityType::Subagent,
+            hash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        );
+        entity.locations.insert(
+            location_key(".ai"),
+            std::path::PathBuf::from("subagents/service-token.md"),
+        );
+        let entity_id = entity_id("subagent:service-token");
+        lockfile.entities.insert(entity_id.clone(), entity);
+        lockfile.overrides.insert(
+            entity_id,
+            std::collections::BTreeMap::from([(
+                runtime_name("codex"),
+                OverrideEntry(std::collections::BTreeMap::from([(
+                    "api_token".to_string(),
+                    serde_json::json!("redacted"),
+                )])),
+            )]),
+        );
+        if let Err(error) = write_lockfile(&repo, &lockfile) {
+            panic!("lockfile should write: {error}");
+        }
+
+        let report = match doctor(&repo) {
+            Ok(report) => report,
+            Err(error) => panic!("doctor should succeed: {error}"),
+        };
+
+        assert!(report.health.lockfile_privacy_warnings >= 2);
+        assert!(report.findings.iter().any(|finding| {
+            finding.starts_with("lockfile_privacy_warning_")
+                && finding.contains("entity id `subagent:service-token`")
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.starts_with("lockfile_privacy_warning_")
+                && finding.contains("override key `api_token`")
+        }));
     }
 
     #[test]
@@ -4644,7 +4423,7 @@ schema: 1
             panic!("preserved version should write: {error}");
         }
 
-        let findings = match super::doctor_conflict_findings(&cache, &lockfile) {
+        let findings = match super::doctor::doctor_conflict_findings(&cache, &lockfile) {
             Ok(findings) => findings,
             Err(error) => panic!("conflict findings should build: {error}"),
         };

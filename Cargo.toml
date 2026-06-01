@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -20,12 +20,12 @@ repository = "https://github.com/aranticlabs/agentmesh"
 homepage = "https://agentmesh.sh"
 
 [workspace.dependencies]
-agentmesh-adapter-claude = { path = "adapters/claude", version = "0.1.1" }
-agentmesh-adapter-codex = { path = "adapters/codex", version = "0.1.1" }
-agentmesh-adapter-sdk-rust = { path = "crates/agentmesh-adapter-sdk-rust", version = "0.1.1" }
-agentmesh-core = { path = "crates/agentmesh-core", version = "0.1.1" }
-agentmesh-protocol = { path = "crates/agentmesh-protocol", version = "0.1.1" }
-agentmesh-watcher = { path = "crates/agentmesh-watcher", version = "0.1.1" }
+agentmesh-adapter-claude = { path = "adapters/claude", version = "0.1.2" }
+agentmesh-adapter-codex = { path = "adapters/codex", version = "0.1.2" }
+agentmesh-adapter-sdk-rust = { path = "crates/agentmesh-adapter-sdk-rust", version = "0.1.2" }
+agentmesh-core = { path = "crates/agentmesh-core", version = "0.1.2" }
+agentmesh-protocol = { path = "crates/agentmesh-protocol", version = "0.1.2" }
+agentmesh-watcher = { path = "crates/agentmesh-watcher", version = "0.1.2" }
 base64 = "0.22.1"
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
