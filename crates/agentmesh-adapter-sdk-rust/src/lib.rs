@@ -1173,8 +1173,7 @@ mod tests {
 
     use super::{
         Adapter, AdapterError, AdapterMetadata, FormatTranslation, canonicalize_frontmatter,
-        collect_entity_files, log_notification, parse_frontmatter, run_adapter_with_io,
-        sha256_bytes, write_atomic,
+        log_notification, parse_frontmatter, run_adapter_with_io, sha256_bytes, write_atomic,
     };
     use agentmesh_protocol::EntityType;
     use serde_norway::Value as YamlValue;
@@ -1412,6 +1411,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn collect_entity_files_rejects_symlinked_paths() {
+        use super::collect_entity_files;
         use std::os::unix::fs::symlink;
 
         let temp = match tempfile::tempdir() {
