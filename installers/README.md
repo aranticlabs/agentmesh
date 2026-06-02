@@ -2,14 +2,15 @@
 
 This directory holds packaging wrappers around the single AgentMesh binary.
 
-| Path          | Purpose                                        |
-| ------------- | ---------------------------------------------- |
-| `install.sh`  | macOS and Linux installer                      |
-| `install.ps1` | Windows installer                              |
+| Path          | Purpose                   |
+| ------------- | ------------------------- |
+| `install.sh`  | macOS and Linux installer |
+| `install.ps1` | Windows installer         |
 
 Release installers resolve the current platform archive, verify it against the published
 `SHA256SUMS` manifest, verify the manifest signature and Sigstore bundle with cosign, and install
-the single binary.
+the single binary. The shell installer also verifies that the installed binary launches before
+reporting success.
 
 Public docs: [agentmesh.sh/installation/curl](https://agentmesh.sh/installation/curl)
 
@@ -102,6 +103,7 @@ Smoke checks run without network access:
 ```bash
 sh installers/install.sh --smoke
 sh installers/install.sh --upgrade-help
+sh installers/test-install.sh
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Smoke
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -UpgradeHelp
 ```

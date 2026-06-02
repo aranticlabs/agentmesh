@@ -50,6 +50,7 @@ fuzz-check:
 installer-smoke:
 	@sh installers/install.sh --smoke
 	@sh installers/install.sh --upgrade-help
+	@sh installers/test-install.sh
 
 ci-rust: fmt-check check clippy test build bench-check fuzz-check
 	@echo "$(GREEN)[SUCCESS]$(NC) Rust CI checks passed"

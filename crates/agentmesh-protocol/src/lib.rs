@@ -17,6 +17,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// JSON-RPC protocol marker.
 pub const JSONRPC_VERSION: &str = "2.0";
 
+/// Maximum JSON-RPC frame payload accepted over adapter stdio.
+pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+
 /// Canonical entity categories exchanged across adapter boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -700,6 +703,14 @@ pub enum ProtocolError {
         /// Header value.
         value: String,
     },
+    /// Content length exceeds the accepted frame limit.
+    #[error("Content-Length {length} exceeds maximum frame size {max}")]
+    FrameTooLarge {
+        /// Requested payload length.
+        length: usize,
+        /// Maximum accepted payload length.
+        max: usize,
+    },
     /// JSON serialization failed.
     #[error("failed to serialize JSON-RPC message")]
     SerializeJson {
@@ -764,6 +775,12 @@ pub fn read_frame(reader: &mut impl BufRead) -> Result<Vec<u8>> {
     }
 
     let length = content_length.ok_or(ProtocolError::MissingContentLength)?;
+    if length > MAX_FRAME_BYTES {
+        return Err(ProtocolError::FrameTooLarge {
+            length,
+            max: MAX_FRAME_BYTES,
+        });
+    }
     let mut payload = vec![0; length];
     reader
         .read_exact(&mut payload)
@@ -779,6 +796,12 @@ pub fn read_frame(reader: &mut impl BufRead) -> Result<Vec<u8>> {
 
 /// Writes one framed payload.
 pub fn write_frame(writer: &mut impl Write, payload: &[u8]) -> Result<()> {
+    if payload.len() > MAX_FRAME_BYTES {
+        return Err(ProtocolError::FrameTooLarge {
+            length: payload.len(),
+            max: MAX_FRAME_BYTES,
+        });
+    }
     write!(writer, "Content-Length: {}\r\n\r\n", payload.len()).map_err(|source| {
         ProtocolError::Io {
             action: "write header",
@@ -827,8 +850,8 @@ mod tests {
 
     use super::{
         AdapterErrorCode, EntityFile, EntityType, InitializeRequest, InitializeResponse,
-        JsonRpcRequest, PROTOCOL_VERSION, ProtocolError, RequestId, read_frame, read_json_frame,
-        write_frame, write_json_frame,
+        JsonRpcRequest, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProtocolError, RequestId, read_frame,
+        read_json_frame, write_frame, write_json_frame,
     };
 
     #[test]
@@ -960,5 +983,17 @@ mod tests {
         };
 
         assert!(matches!(error, ProtocolError::InvalidHeader { .. }));
+    }
+
+    #[test]
+    fn rejects_oversized_frames_before_body_allocation() {
+        let mut reader =
+            Cursor::new(format!("Content-Length: {}\r\n\r\n", MAX_FRAME_BYTES + 1).into_bytes());
+        let error = match read_frame(&mut reader) {
+            Ok(_) => panic!("oversized frame should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, ProtocolError::FrameTooLarge { .. }));
     }
 }
