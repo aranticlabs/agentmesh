@@ -436,6 +436,7 @@ fn import_toml_subagent(
         .iter()
         .map(|(key, value)| (key.clone(), toml_to_json(value)))
         .collect::<BTreeMap<_, _>>();
+    normalize_imported_codex_skills(&mut frontmatter);
     let body = frontmatter
         .get("instructions")
         .or_else(|| frontmatter.get("prompt"))
@@ -517,6 +518,7 @@ fn render_toml_subagent(
             .iter()
             .map(|(key, value)| (key.clone(), value.clone())),
     );
+    normalize_codex_skills_for_emit(&mut merged);
 
     let body = toml_instructions_body(&document.body);
     if !document.body.is_empty()
@@ -536,6 +538,58 @@ fn render_toml_subagent(
         }
     }
     Ok(serialize_toml_table(&table))
+}
+
+fn normalize_imported_codex_skills(frontmatter: &mut BTreeMap<String, JsonValue>) {
+    let Some(skills) = frontmatter.get("skills").cloned() else {
+        return;
+    };
+    let Some(bundled) = extract_current_codex_bundled_skills(&skills) else {
+        return;
+    };
+    frontmatter.insert("skills".to_string(), JsonValue::Array(bundled));
+}
+
+fn normalize_codex_skills_for_emit(frontmatter: &mut BTreeMap<String, JsonValue>) {
+    let Some(skills) = frontmatter.get("skills").cloned() else {
+        return;
+    };
+    let Some(bundled) = extract_canonical_skills(&skills) else {
+        return;
+    };
+    frontmatter.insert(
+        "skills".to_string(),
+        JsonValue::Object(
+            [("bundled".to_string(), JsonValue::Array(bundled))]
+                .into_iter()
+                .collect(),
+        ),
+    );
+}
+
+fn extract_current_codex_bundled_skills(value: &JsonValue) -> Option<Vec<JsonValue>> {
+    let JsonValue::Object(object) = value else {
+        return None;
+    };
+    object.get("bundled").and_then(extract_canonical_skills)
+}
+
+fn extract_canonical_skills(value: &JsonValue) -> Option<Vec<JsonValue>> {
+    match value {
+        JsonValue::Array(values) => {
+            let skills = values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(|skill| JsonValue::String(skill.to_string()))
+                .collect::<Vec<_>>();
+            if skills.is_empty() {
+                None
+            } else {
+                Some(skills)
+            }
+        }
+        _ => None,
+    }
 }
 
 fn toml_instructions_body(body: &str) -> String {
@@ -819,7 +873,7 @@ mod tests {
         );
         write(
             root.join(".codex/agents/code-reviewer.toml"),
-            "name = \"code-reviewer\"\nmodel = \"gpt-5\"\ninstructions = \"Review code.\"\n",
+            "name = \"code-reviewer\"\nmodel = \"gpt-5\"\ninstructions = \"Review code.\"\n\n[skills]\nbundled = [\"security-review\"]\n",
         );
 
         let adapter = CodexAdapter;
@@ -841,6 +895,10 @@ mod tests {
         };
         assert_eq!(subagent.frontmatter.get("model"), Some(&json!("gpt-5")));
         assert_eq!(subagent.frontmatter.get("instructions"), None);
+        assert_eq!(
+            subagent.frontmatter.get("skills"),
+            Some(&json!(["security-review"]))
+        );
         assert!(
             subagent
                 .files
@@ -901,6 +959,47 @@ mod tests {
         let content = read(root.join(".codex/agents/code-reviewer.toml"));
         assert!(content.contains("name = \"code-reviewer\""));
         assert!(content.contains("instructions = \"Review code.\""));
+    }
+
+    #[test]
+    fn emits_codex_subagent_skills_as_structured_table() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        let adapter = CodexAdapter;
+        let files = BTreeMap::from([(
+            PathBuf::from("code-reviewer.md"),
+            file(
+                "---\nname: code-reviewer\nmodel: gpt-5\nskills:\n  - add-endpoint\n  - explore-architecture\n---\nReview code.\n",
+            ),
+        )]);
+
+        let response = match adapter.emit(EmitRequest {
+            runtime_dir: root.join(".codex"),
+            mode: RuntimeMode::Managed,
+            entities: vec![EmitEntity {
+                id: "subagent:code-reviewer".to_string(),
+                entity_type: agentmesh_protocol::EntityType::Subagent,
+                scope: None,
+                files,
+                frontmatter: BTreeMap::new(),
+                overrides: BTreeMap::new(),
+            }],
+        }) {
+            Ok(response) => response,
+            Err(error) => panic!("emit should succeed: {error}"),
+        };
+
+        assert_eq!(
+            response.files_written,
+            vec![PathBuf::from(".codex/agents/code-reviewer.toml")]
+        );
+        let content = read(root.join(".codex/agents/code-reviewer.toml"));
+        assert!(content.contains("[skills]"));
+        assert!(content.contains("bundled = [\"add-endpoint\", \"explore-architecture\"]"));
+        assert!(!content.contains("skills = \""));
     }
 
     #[test]
@@ -969,10 +1068,11 @@ mod tests {
             Err(error) => panic!("install should succeed: {error}"),
         };
 
-        assert_eq!(installed.hooks_installed[0].entry_path, "$.PostToolUse[0]");
+        assert_eq!(installed.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
         let overlay = read(root.join(".codex/hooks.json"));
         assert!(overlay.contains("codex-hook"));
         assert!(overlay.contains("AgentMesh sync"));
+        assert!(overlay.contains("\"hooks\""));
 
         let removed = match adapter.remove_hooks(RemoveHooksRequest {
             runtime_dir: root.join(".codex"),
@@ -994,7 +1094,7 @@ mod tests {
         let root = temp.path();
         write(
             root.join(".codex/hooks.json"),
-            r#"{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}"#,
+            r#"{"hooks":{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}}"#,
         );
         let adapter = CodexAdapter;
 
@@ -1006,7 +1106,7 @@ mod tests {
             Ok(installed) => installed,
             Err(error) => panic!("install should succeed: {error}"),
         };
-        assert_eq!(installed.hooks_installed[0].entry_path, "$.PostToolUse[1]");
+        assert_eq!(installed.hooks_installed[0].entry_path, "$.hooks.PostToolUse[1]");
 
         let removed = match adapter.remove_hooks(RemoveHooksRequest {
             runtime_dir: root.join(".codex"),
@@ -1164,8 +1264,8 @@ severity = ["high", "medium"]
         let overlay = read(root.join(".codex/hooks.json"));
         let hook_count = overlay.matches("codex-hook").count();
 
-        assert_eq!(first.hooks_installed[0].entry_path, "$.PostToolUse[0]");
-        assert_eq!(second.hooks_installed[0].entry_path, "$.PostToolUse[0]");
+        assert_eq!(first.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
+        assert_eq!(second.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
         assert_eq!(hook_count, 1);
     }
 

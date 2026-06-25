@@ -18,13 +18,13 @@ pub(crate) fn install_hooks(
         request.agentmesh_binary_path.display()
     );
     let mut value = read_json_object(&overlay)?;
-    let post_tool_use = ensure_hook_array(&mut value, &["PostToolUse"])?;
+    let post_tool_use = ensure_hook_array(&mut value, &["hooks", "PostToolUse"])?;
 
     if let Some(index) = find_hook_group(post_tool_use, &command) {
         return Ok(InstallHooksResponse {
             hooks_installed: vec![InstalledHook {
                 overlay_file: workspace_relative(&workspace_root, &overlay)?,
-                entry_path: format!("$.PostToolUse[{index}]"),
+                entry_path: format!("$.hooks.PostToolUse[{index}]"),
                 command,
                 matcher,
             }],
@@ -48,7 +48,7 @@ pub(crate) fn install_hooks(
     Ok(InstallHooksResponse {
         hooks_installed: vec![InstalledHook {
             overlay_file: workspace_relative(&workspace_root, &overlay)?,
-            entry_path: format!("$.PostToolUse[{index}]"),
+            entry_path: format!("$.hooks.PostToolUse[{index}]"),
             command,
             matcher,
         }],
@@ -71,7 +71,7 @@ pub(crate) fn remove_hooks(
 
     let mut value = read_json_object(&overlay)?;
     let removed = {
-        let Some(post_tool_use) = find_hook_array_mut(&mut value, &["PostToolUse"]) else {
+        let Some(post_tool_use) = find_hook_array_mut(&mut value, &["hooks", "PostToolUse"]) else {
             return Ok(RemoveHooksResponse {
                 ok: false,
                 removed_count: 0,
@@ -82,7 +82,7 @@ pub(crate) fn remove_hooks(
         let mut removed = remove_recorded_entries(
             post_tool_use,
             &request.entry_paths,
-            "$.PostToolUse",
+            "$.hooks.PostToolUse",
             "codex-hook",
         );
         if removed == 0 {
@@ -129,6 +129,11 @@ fn codex_hooks_are_empty(value: &JsonValue) -> bool {
         return false;
     };
     object
-        .iter()
-        .all(|(key, value)| key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty))
+        .get("hooks")
+        .and_then(JsonValue::as_object)
+        .is_some_and(|hooks| {
+            hooks.iter().all(|(key, value)| {
+                key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty)
+            })
+        })
 }

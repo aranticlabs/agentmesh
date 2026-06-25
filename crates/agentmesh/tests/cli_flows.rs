@@ -815,7 +815,7 @@ fn install_stop_and_start_are_machine_local_and_surgical() {
     );
     write(
         repo.join(".codex/hooks.json"),
-        r#"{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}"#,
+        r#"{"hooks":{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}}"#,
     );
     let original_lockfile = read(repo.join("agentmesh.lock"));
 
