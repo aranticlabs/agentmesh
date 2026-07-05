@@ -27,6 +27,9 @@ AgentMesh <version>   repo: repo   lockfile: not ready (failed to read lockfile 
   runtime details:
     claude  present=true hook=false entities=5
     codex   present=true hook=false entities=3
+    copilot present=false hook=unsupported entities=0
+    cursor  present=false hook=unsupported entities=0
+    gemini  present=false hook=unsupported entities=0
 
 stderr:
 
@@ -37,6 +40,9 @@ stdout:
 Detected runtimes:
   ✓ claude  (.claude, .claude/skills, .claude/agents, CLAUDE.md)
   ✓ codex   (.codex, .codex/skills, .codex/agents)
+  ✗ copilot (not detected)
+  ✗ cursor  (not detected)
+  ✗ gemini  (not detected)
 
 Detected entities:
   instructions:root            (claude)
@@ -128,8 +134,11 @@ AgentMesh <version>
 Repository: <repo>
 
 Adapters:
-  claude  ✓ detected   bundled, protocol 1, entities [instructions, skill, subagent]
-  codex   ✓ detected   bundled, protocol 1, entities [instructions, skill, subagent]
+  claude  ✓ detected   bundled, protocol 2, entities [instructions, rule, command, hook, mcp-binding, permission-policy, skill, subagent]
+  codex   ✓ detected   bundled, protocol 2, entities [instructions, hook, mcp-binding, permission-policy, skill, subagent]
+  copilot ✗ not detected   bundled, protocol 2, entities [instructions, prompt, skill, subagent]
+  cursor  ✗ not detected   bundled, protocol 2, entities [instructions, rule]
+  gemini  ✗ not detected   bundled, protocol 2, entities [instructions, command, skill]
 
 Hook integrity:
   Status:           pinned
@@ -153,7 +162,7 @@ Watcher daemon:
 
 Lockfile:
   Status:           present
-  Schema:           1 (current)
+  Schema:           2 (current)
   Entities:         8
   Pending conflicts: 0
 
@@ -173,9 +182,18 @@ Core findings:
   integrity_current_binary: <agentmesh-bin>
   integrity_current_sha256: <sha256>
   integrity_version: <version>
-  adapter_claude: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
-  adapter_codex: detected=true declared=true mode=bundled protocol=1 entities=3 hooks=1
+  adapter_claude: detected=true declared=true mode=bundled protocol=2 entities=8 hooks=1
+  adapter_codex: detected=true declared=true mode=bundled protocol=2 entities=6 hooks=1
+  adapter_copilot: detected=false declared=false
+  adapter_cursor: detected=false declared=false
+  adapter_gemini: detected=false declared=false
   adapter_coverage_instructions: claude,codex
+  adapter_coverage_rule: claude
+  adapter_coverage_prompt: none
+  adapter_coverage_command: claude
+  adapter_coverage_hook: claude,codex
+  adapter_coverage_mcp-binding: claude,codex
+  adapter_coverage_permission-policy: claude,codex
   adapter_coverage_skill: claude,codex
   adapter_coverage_subagent: claude,codex
   hooks: none
@@ -236,7 +254,7 @@ exit: Some(64)
 stdout:
 
 stderr:
-⚠ This command is available in AgentMesh v0.2+.
+⚠ This command is reserved for a future AgentMesh release.
 
 
 ## reserved adapter
@@ -244,7 +262,7 @@ exit: Some(64)
 stdout:
 
 stderr:
-⚠ This command is available in AgentMesh v0.2+.
+⚠ This command is reserved for a future AgentMesh release.
 
 
 ## restore dry-run

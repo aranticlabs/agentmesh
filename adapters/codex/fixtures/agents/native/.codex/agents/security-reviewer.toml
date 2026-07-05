@@ -1,0 +1,7 @@
+name = "security-reviewer"
+model = "gpt-5"
+instructions = "Review security-sensitive changes."
+unknown_metadata = "preserve"
+
+[skills]
+bundled = ["repo-map"]

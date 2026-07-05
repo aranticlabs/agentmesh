@@ -48,7 +48,13 @@ impl EntityId {
     pub fn from_parts(entity_type: EntityType, slug: &str) -> Result<Self> {
         match entity_type {
             EntityType::Instructions if slug == "root" => Self::new("instructions:root"),
-            EntityType::Instructions => Self::new(format!("instructions:{slug}")),
+            EntityType::Instructions => Self::new(format!("instructions:scoped:{slug}")),
+            EntityType::Rule => Self::new(format!("rule:{slug}")),
+            EntityType::Prompt => Self::new(format!("prompt:{slug}")),
+            EntityType::Command => Self::new(format!("command:{slug}")),
+            EntityType::Hook => Self::new(format!("hook:{slug}")),
+            EntityType::McpBinding => Self::new(format!("mcp-binding:{slug}")),
+            EntityType::PermissionPolicy => Self::new(format!("permission-policy:{slug}")),
             EntityType::Skill => Self::new(format!("skill:{slug}")),
             EntityType::Subagent => Self::new(format!("subagent:{slug}")),
         }
@@ -255,15 +261,26 @@ impl<'de> Deserialize<'de> for Hash {
 }
 
 fn is_valid_entity_id(value: &str) -> bool {
-    if value == "instructions:root" {
-        return true;
-    }
-
-    let Some((kind, slug)) = value.split_once(':') else {
+    let mut parts = value.split(':');
+    let Some(kind) = parts.next() else {
         return false;
     };
+    let remaining = parts.collect::<Vec<_>>();
 
-    matches!(kind, "skill" | "subagent") && is_slug(slug)
+    match kind {
+        "instructions" => {
+            matches!(remaining.as_slice(), ["root"])
+                || matches!(remaining.as_slice(), ["scoped", slug] if is_slug(slug))
+        }
+        "command" => {
+            matches!(remaining.as_slice(), [slug] if is_slug(slug))
+                || matches!(remaining.as_slice(), [namespace, slug] if is_slug(namespace) && is_slug(slug))
+        }
+        "rule" | "prompt" | "hook" | "mcp-binding" | "permission-policy" | "skill" | "subagent" => {
+            matches!(remaining.as_slice(), [slug] if is_slug(slug))
+        }
+        _ => false,
+    }
 }
 
 fn is_stable_name(value: &str) -> bool {
@@ -289,10 +306,25 @@ mod tests {
     #[test]
     fn validates_entity_ids() {
         assert!(EntityId::new("instructions:root").is_ok());
+        assert!(EntityId::new("instructions:scoped:api-review").is_ok());
+        assert!(EntityId::new("rule:security").is_ok());
+        assert!(EntityId::new("prompt:release-notes").is_ok());
+        assert!(EntityId::new("command:git:commit").is_ok());
+        assert!(EntityId::new("hook:gemini-project").is_ok());
+        assert!(EntityId::new("mcp-binding:gemini-project").is_ok());
+        assert!(EntityId::new("permission-policy:gemini-project").is_ok());
         assert!(EntityId::new("skill:security-review-2").is_ok());
         assert!(EntityId::new("subagent:code-reviewer").is_ok());
 
         assert!(EntityId::new("instructions:foo").is_err());
+        assert!(EntityId::new("instructions:scoped:").is_err());
+        assert!(EntityId::new("command:").is_err());
+        assert!(EntityId::new("command:git:").is_err());
+        assert!(EntityId::new("command:git:commit:extra").is_err());
+        assert!(EntityId::new("prompt:release_notes").is_err());
+        assert!(EntityId::new("hook:Gemini").is_err());
+        assert!(EntityId::new("mcp_binding:gemini-project").is_err());
+        assert!(EntityId::new("permission-policy:../gemini").is_err());
         assert!(EntityId::new("skill:Security").is_err());
         assert!(EntityId::new("skill:").is_err());
     }

@@ -1,0 +1,8 @@
+---
+description: Team security guidance
+alwaysApply: true
+---
+
+# Team Security
+
+Review authentication and file-write paths for explicit trust boundaries.

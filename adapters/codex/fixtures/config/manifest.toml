@@ -1,0 +1,63 @@
+[[fixture]]
+name = "project-mcp"
+surface = "codex.project-mcp"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/mcp"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "mcp/.codex/config.toml"
+expected_canonical_id = "mcp-binding:codex-project"
+expected_emitted_path = ".codex/config.toml"
+expected_diagnostics = []
+
+[[fixture]]
+name = "permission-policy"
+surface = "codex.permission-policy"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/config-reference"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "permissions/.codex/config.toml"
+expected_canonical_id = "permission-policy:codex-project"
+expected_emitted_path = ".codex/config.toml"
+expected_diagnostics = []
+
+[[fixture]]
+name = "combined-config"
+surface = "codex.project-mcp"
+cases = ["round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/config-reference"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "combined/.codex/config.toml"
+expected_canonical_id = "mcp-binding:codex-project"
+expected_emitted_path = ".codex/config.toml"
+expected_diagnostics = []
+expected_behaviors = ["MCP and permission sections share config.toml without overwriting each other"]
+
+[[fixture]]
+name = "invalid-project-mcp"
+surface = "codex.project-mcp"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/mcp"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "invalid/.codex/config.toml"
+expected_canonical_id = "mcp-binding:codex-project"
+expected_diagnostics = ["failed to parse TOML"]
+
+[[fixture]]
+name = "invalid-permission-policy"
+surface = "codex.permission-policy"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/config-reference"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "invalid/.codex/config.toml"
+expected_canonical_id = "permission-policy:codex-project"
+expected_diagnostics = ["failed to parse TOML"]

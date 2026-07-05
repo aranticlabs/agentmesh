@@ -1,0 +1,4 @@
+# Manual Review
+
+Use this rule when a change needs a focused review of recovery behavior and
+user-visible diagnostics.

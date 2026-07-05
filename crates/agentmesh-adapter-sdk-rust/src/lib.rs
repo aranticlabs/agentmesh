@@ -1376,6 +1376,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_crlf_frontmatter_delimiters() {
+        let input =
+            "---\r\nname: implementation-auditor\r\ndescription: Strict audit\r\n---\r\nBody\r\n";
+        let document = match parse_frontmatter(input) {
+            Ok(document) => document,
+            Err(error) => panic!("frontmatter should parse: {error}"),
+        };
+
+        assert_eq!(
+            document.frontmatter.get("name"),
+            Some(&YamlValue::String("implementation-auditor".to_string()))
+        );
+        assert_eq!(
+            document.frontmatter.get("description"),
+            Some(&YamlValue::String("Strict audit".to_string()))
+        );
+        assert_eq!(document.body, "Body\r\n");
+    }
+
+    #[test]
     fn malformed_structured_frontmatter_still_fails() {
         let input = "---\nname: demo\nmetadata: {unterminated\n---\nBody\n";
         assert!(parse_frontmatter(input).is_err());

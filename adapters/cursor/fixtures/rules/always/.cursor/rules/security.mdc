@@ -1,0 +1,9 @@
+---
+description: Security invariants for all changes
+alwaysApply: true
+---
+
+# Security Invariants
+
+Preserve explicit user consent around hook installation and command execution.
+Never add a generated command that executes repository-controlled strings.

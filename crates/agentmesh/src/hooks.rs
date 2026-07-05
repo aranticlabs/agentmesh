@@ -11,6 +11,33 @@ pub(crate) fn print_runtime_install_dry_run(context: &CliContext, runtime: &str)
     let overlay = match runtime {
         "claude" => ".claude/settings.local.json",
         "codex" => ".codex/hooks.json",
+        "cursor" => {
+            if !context.silent {
+                println!(
+                    "{} Cursor has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
+        "copilot" => {
+            if !context.silent {
+                println!(
+                    "{} Copilot has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
+        "gemini" => {
+            if !context.silent {
+                println!(
+                    "{} Gemini has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
         other => {
             return Err(CliError::new(
                 format!("unknown bundled runtime: {other}"),
@@ -113,15 +140,15 @@ pub(crate) fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> 
         if existing_is_agentmesh {
             saved.exists()
         } else {
-            if let Some(framework) = detect_pre_commit_framework(content) {
-                if !force {
-                    return Err(CliError::new(
-                        format!(
-                            "detected {framework} managing pre-commit; add AgentMesh to that framework or rerun with --force"
-                        ),
-                        AgentmeshExitCode::Usage,
-                    ));
-                }
+            if let Some(framework) = detect_pre_commit_framework(content)
+                && !force
+            {
+                return Err(CliError::new(
+                    format!(
+                        "detected {framework} managing pre-commit; add AgentMesh to that framework or rerun with --force"
+                    ),
+                    AgentmeshExitCode::Usage,
+                ));
             }
             if saved.exists() {
                 return Err(CliError::new(
@@ -204,6 +231,33 @@ pub(crate) fn install_runtime_hook(context: &CliContext, runtime: &str) -> Resul
             agentmesh_binary_path: binary_path,
             matcher_extra: None,
         }),
+        "cursor" => {
+            if !context.silent {
+                println!(
+                    "{} Cursor has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
+        "copilot" => {
+            if !context.silent {
+                println!(
+                    "{} Copilot has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
+        "gemini" => {
+            if !context.silent {
+                println!(
+                    "{} Gemini has no installable AgentMesh runtime hook in v0.2",
+                    context.paint(OutputStyle::Info, "→")
+                );
+            }
+            return Ok(());
+        }
         other => {
             return Err(CliError::new(
                 format!("unknown bundled runtime: {other}"),

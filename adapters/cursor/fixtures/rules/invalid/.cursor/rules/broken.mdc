@@ -1,0 +1,9 @@
+---
+description: "unterminated
+alwaysApply: true
+---
+
+# Broken Rule
+
+This file is intentionally invalid and should produce diagnostics without being
+overwritten.

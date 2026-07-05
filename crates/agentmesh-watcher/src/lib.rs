@@ -26,6 +26,9 @@ const BACKGROUND_START_TIMEOUT: Duration = Duration::from_secs(10);
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ROTATED_LOGS: u8 = 3;
+const MAX_SKILL_TREE_DEPTH: usize = 32;
+const MAX_SKILL_FILE_COUNT: usize = 1024;
+const MAX_SKILL_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
 const STATE_RUNNING: &str = "running";
 const STATE_IDLE: &str = "idle";
@@ -218,6 +221,7 @@ struct SelfWriteEntry {
     location_key: String,
     lockfile_path: PathBuf,
     path: PathBuf,
+    entity_type: Option<String>,
     hash: String,
 }
 
@@ -234,6 +238,8 @@ struct SuppressionLockfile {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
 struct SuppressionEntity {
+    #[serde(default, rename = "type")]
+    entity_type: Option<String>,
     #[serde(default)]
     locations: BTreeMap<String, PathBuf>,
     #[serde(default)]
@@ -264,26 +270,25 @@ fn start_with_cache_root(
     let layout = WatcherLayout::new(repo_root, cache_root)?;
     layout.ensure_dirs()?;
 
-    if !opts.register_as_service {
-        if let Some(record) = read_active_record(&layout)? {
-            if is_running_state(&record.state) {
-                if opts.foreground
-                    && record.pid == std::process::id()
-                    && record.state == STATE_BACKGROUND_SPAWNED
-                {
-                    return run_foreground(repo_root, opts, &layout);
-                }
-                append_log(
-                    &layout.log_file,
-                    "start-idempotent",
-                    json!({
-                        "pid": record.pid,
-                        "state": record.state,
-                    }),
-                )?;
-                return Ok(handle(repo_root, &layout));
-            }
+    if !opts.register_as_service
+        && let Some(record) = read_active_record(&layout)?
+        && is_running_state(&record.state)
+    {
+        if opts.foreground
+            && record.pid == std::process::id()
+            && record.state == STATE_BACKGROUND_SPAWNED
+        {
+            return run_foreground(repo_root, opts, &layout);
         }
+        append_log(
+            &layout.log_file,
+            "start-idempotent",
+            json!({
+                "pid": record.pid,
+                "state": record.state,
+            }),
+        )?;
+        return Ok(handle(repo_root, &layout));
     }
 
     if opts.register_as_service {
@@ -303,18 +308,18 @@ fn spawn_background(
     opts: WatchOptions,
     layout: &WatcherLayout,
 ) -> Result<WatcherHandle> {
-    if let Some(record) = read_active_record(layout)? {
-        if is_running_state(&record.state) {
-            append_log(
-                &layout.log_file,
-                "start-idempotent",
-                json!({
-                    "pid": record.pid,
-                    "state": record.state,
-                }),
-            )?;
-            return Ok(handle(repo_root, layout));
-        }
+    if let Some(record) = read_active_record(layout)?
+        && is_running_state(&record.state)
+    {
+        append_log(
+            &layout.log_file,
+            "start-idempotent",
+            json!({
+                "pid": record.pid,
+                "state": record.state,
+            }),
+        )?;
+        return Ok(handle(repo_root, layout));
     }
 
     let executable = env::current_exe().map_err(|source| WatcherError::Io {
@@ -374,10 +379,12 @@ fn spawn_background(
 fn wait_for_background_start(layout: &WatcherLayout, pid: u32) -> Result<()> {
     let deadline = Instant::now() + BACKGROUND_START_TIMEOUT;
     loop {
-        if let Ok(record) = read_json::<WatcherRecord>(&layout.state_file) {
-            if record.pid == pid && record.state == STATE_RUNNING && process_running(pid) {
-                return Ok(());
-            }
+        if let Ok(record) = read_json::<WatcherRecord>(&layout.state_file)
+            && record.pid == pid
+            && record.state == STATE_RUNNING
+            && process_running(pid)
+        {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             append_log(
@@ -735,10 +742,17 @@ impl SelfWriteIndex {
         for entity in lockfile.entities.values() {
             for (location_key, location_path) in &entity.locations {
                 if let Some(hash) = entity.emitted_native_sha256.get(location_key) {
+                    let path = normalize_lockfile_location(repo_root, location_key, location_path);
+                    if entity.entity_type.as_deref() == Some("skill")
+                        && !skill_primary_path_allowed(repo_root, &path)
+                    {
+                        continue;
+                    }
                     entries.push(SelfWriteEntry {
                         location_key: location_key.clone(),
                         lockfile_path: location_path.clone(),
-                        path: normalize_lockfile_location(repo_root, location_key, location_path),
+                        path,
+                        entity_type: entity.entity_type.clone(),
                         hash: hash.to_ascii_lowercase(),
                     });
                 }
@@ -755,11 +769,63 @@ impl SelfWriteIndex {
     ) -> Option<&'a SelfWriteEntry> {
         let normalized = normalize_repo_path(repo_root, path);
         self.entries.iter().find(|entry| {
+            if entry.entity_type.as_deref() == Some("skill") {
+                return skill_hash_matches(&entry.path, &normalized, &entry.hash);
+            }
             entry.path == normalized
                 && path.is_file()
                 && matches!(sha256_file_hex(path), Ok(hash) if hash == entry.hash)
         })
     }
+}
+
+fn skill_primary_path_allowed(repo_root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(repo_root) else {
+        return false;
+    };
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+        || relative.file_name() != Some(OsStr::new("SKILL.md"))
+    {
+        return false;
+    }
+    let Some(parent) = relative.parent() else {
+        return false;
+    };
+    for root in [
+        ".ai/skills",
+        ".agents/skills",
+        ".claude/skills",
+        ".codex/skills",
+        ".github/skills",
+        ".gemini/skills",
+    ] {
+        let Ok(slug) = parent.strip_prefix(root) else {
+            continue;
+        };
+        if slug.components().count() == 1
+            && slug
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| !name.starts_with('.'))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn skill_hash_matches(
+    primary_path: &Path,
+    normalized_event_path: &Path,
+    expected_hash: &str,
+) -> bool {
+    let Some(skill_root) = primary_path.parent() else {
+        return false;
+    };
+    normalized_event_path.starts_with(skill_root)
+        && matches!(skill_dir_hash_hex(skill_root), Ok(hash) if hash == expected_hash)
 }
 
 impl ForegroundLoop {
@@ -1194,6 +1260,124 @@ fn sha256_file_hex(path: &Path) -> Result<String> {
     Ok(hex_lower(digest.as_ref()))
 }
 
+fn skill_dir_hash_hex(root: &Path) -> Result<String> {
+    let mut files = BTreeMap::new();
+    let mut total_bytes = 0;
+    collect_skill_files(root, root, 0, &mut files, &mut total_bytes)?;
+    let mut bytes = Vec::new();
+    for (path, contents) in files {
+        bytes.extend_from_slice(path.as_os_str().as_encoded_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&contents);
+        bytes.push(0);
+    }
+    let digest = Sha256::digest(bytes);
+    Ok(hex_lower(digest.as_ref()))
+}
+
+fn collect_skill_files(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    total_bytes: &mut u64,
+) -> Result<()> {
+    if depth > MAX_SKILL_TREE_DEPTH {
+        return Err(invalid_skill_hash_input(
+            dir,
+            format!("skill directory depth exceeds {MAX_SKILL_TREE_DEPTH}"),
+        ));
+    }
+    let metadata = fs::symlink_metadata(dir).map_err(|source| WatcherError::Io {
+        action: "read metadata",
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(invalid_skill_hash_input(
+            dir,
+            "symlinked skill path is not supported",
+        ));
+    }
+    let mut entries = fs::read_dir(dir)
+        .map_err(|source| WatcherError::Io {
+            action: "read directory",
+            path: dir.to_path_buf(),
+            source,
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|source| WatcherError::Io {
+            action: "read directory entry",
+            path: dir.to_path_buf(),
+            source,
+        })?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|source| WatcherError::Io {
+            action: "read metadata",
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(invalid_skill_hash_input(
+                &path,
+                "symlinked skill path is not supported",
+            ));
+        }
+        if metadata.is_dir() {
+            collect_skill_files(root, &path, depth + 1, files, total_bytes)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        if files.len() >= MAX_SKILL_FILE_COUNT {
+            return Err(invalid_skill_hash_input(
+                &path,
+                format!("skill file count exceeds {MAX_SKILL_FILE_COUNT}"),
+            ));
+        }
+        let projected_bytes = total_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| invalid_skill_hash_input(&path, "skill byte count overflowed"))?;
+        if projected_bytes > MAX_SKILL_TOTAL_BYTES {
+            return Err(invalid_skill_hash_input(
+                &path,
+                format!("skill byte size exceeds {MAX_SKILL_TOTAL_BYTES}"),
+            ));
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| path.clone());
+        let contents = fs::read(&path).map_err(|source| WatcherError::Io {
+            action: "read file",
+            path: path.clone(),
+            source,
+        })?;
+        *total_bytes = total_bytes
+            .checked_add(u64::try_from(contents.len()).unwrap_or(u64::MAX))
+            .ok_or_else(|| invalid_skill_hash_input(&path, "skill byte count overflowed"))?;
+        if *total_bytes > MAX_SKILL_TOTAL_BYTES {
+            return Err(invalid_skill_hash_input(
+                &path,
+                format!("skill byte size exceeds {MAX_SKILL_TOTAL_BYTES}"),
+            ));
+        }
+        files.insert(relative, contents);
+    }
+    Ok(())
+}
+
+fn invalid_skill_hash_input(path: &Path, message: impl Into<String>) -> WatcherError {
+    WatcherError::Io {
+        action: "hash skill directory",
+        path: path.to_path_buf(),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into()),
+    }
+}
+
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -1385,8 +1569,8 @@ mod tests {
         STATE_STOPPED, SelfWriteIndex, WatchOptions, WatcherLayout, WatcherRecord, append_log,
         contains_vcs_path, idle_timeout, rotated_log_path,
         service::{service_definition_contents, service_name},
-        sha256_file_hex, start_with_cache_root, status_with_cache_root, stop_with_cache_root,
-        write_record,
+        sha256_file_hex, skill_dir_hash_hex, start_with_cache_root, status_with_cache_root,
+        stop_with_cache_root, write_record,
     };
 
     #[test]
@@ -1627,6 +1811,344 @@ entities:
             index.entries,
             native_path.display()
         );
+    }
+
+    #[test]
+    fn self_write_index_suppresses_v02_native_surfaces() {
+        let temp = tempdir();
+        let repo = temp.path().join("repo");
+        create_dir(&repo);
+        let cache = temp.path().join("cache");
+        let layout = layout(&repo, &cache);
+        let cases = [
+            (
+                "instructions:root",
+                "instructions",
+                ".ai",
+                "../AGENTS.md",
+                "AGENTS.md",
+                b"Root instructions\n".as_slice(),
+            ),
+            (
+                "rule:claude-security",
+                "rule",
+                ".claude",
+                "rules/security.md",
+                ".claude/rules/security.md",
+                b"Security rule\n",
+            ),
+            (
+                "command:claude-review",
+                "command",
+                ".claude",
+                "commands/review.md",
+                ".claude/commands/review.md",
+                b"Review command\n",
+            ),
+            (
+                "skill:claude-release",
+                "skill",
+                ".claude",
+                "skills/release/SKILL.md",
+                ".claude/skills/release/SKILL.md",
+                b"Claude skill\n",
+            ),
+            (
+                "subagent:claude-reviewer",
+                "subagent",
+                ".claude",
+                "agents/reviewer.md",
+                ".claude/agents/reviewer.md",
+                b"Claude agent\n",
+            ),
+            (
+                "hook:claude-project",
+                "hook",
+                ".claude",
+                "settings.json",
+                ".claude/settings.json",
+                br#"{"hooks":{}}"#,
+            ),
+            (
+                "mcp-binding:claude-project",
+                "mcp_binding",
+                ".claude",
+                "../.mcp.json",
+                ".mcp.json",
+                br#"{"mcpServers":{}}"#,
+            ),
+            (
+                "skill:codex-release",
+                "skill",
+                ".codex",
+                "skills/release/SKILL.md",
+                ".codex/skills/release/SKILL.md",
+                b"Codex skill\n",
+            ),
+            (
+                "subagent:codex-reviewer",
+                "subagent",
+                ".codex",
+                "agents/reviewer.toml",
+                ".codex/agents/reviewer.toml",
+                b"name = \"reviewer\"\n",
+            ),
+            (
+                "hook:codex-project",
+                "hook",
+                ".codex",
+                "hooks.json",
+                ".codex/hooks.json",
+                br#"{"hooks":{}}"#,
+            ),
+            (
+                "mcp-binding:codex-project",
+                "mcp_binding",
+                ".codex",
+                "config.toml",
+                ".codex/config.toml",
+                b"[mcp_servers.repo]\ncommand = \"repo\"\n",
+            ),
+            (
+                "permission-policy:codex-project",
+                "permission_policy",
+                ".codex",
+                "config.toml",
+                ".codex/config.toml",
+                b"[mcp_servers.repo]\ncommand = \"repo\"\n",
+            ),
+            (
+                "instructions:copilot-root",
+                "instructions",
+                ".copilot",
+                "../.github/copilot-instructions.md",
+                ".github/copilot-instructions.md",
+                b"Copilot root\n",
+            ),
+            (
+                "instructions:scoped:api-review",
+                "instructions",
+                ".copilot",
+                "../.github/instructions/api.instructions.md",
+                ".github/instructions/api.instructions.md",
+                b"Copilot scoped\n",
+            ),
+            (
+                "prompt:release",
+                "prompt",
+                ".copilot",
+                "../.github/prompts/release.prompt.md",
+                ".github/prompts/release.prompt.md",
+                b"Copilot prompt\n",
+            ),
+            (
+                "skill:repo-map",
+                "skill",
+                ".copilot",
+                "../.github/skills/repo-map/SKILL.md",
+                ".github/skills/repo-map/SKILL.md",
+                b"Copilot skill\n",
+            ),
+            (
+                "subagent:security-reviewer",
+                "subagent",
+                ".copilot",
+                "../.github/agents/security-reviewer.agent.md",
+                ".github/agents/security-reviewer.agent.md",
+                b"Copilot agent\n",
+            ),
+            (
+                "rule:cursor-security",
+                "rule",
+                ".cursor",
+                "rules/security.mdc",
+                ".cursor/rules/security.mdc",
+                b"Cursor rule\n",
+            ),
+            (
+                "instructions:gemini-root",
+                "instructions",
+                ".gemini",
+                "../GEMINI.md",
+                "GEMINI.md",
+                b"Gemini root\n",
+            ),
+            (
+                "instructions:scoped:packages-api",
+                "instructions",
+                ".gemini",
+                "../packages/api/GEMINI.md",
+                "packages/api/GEMINI.md",
+                b"Gemini scoped\n",
+            ),
+            (
+                "skill:gemini-release",
+                "skill",
+                ".gemini",
+                "skills/release/SKILL.md",
+                ".gemini/skills/release/SKILL.md",
+                b"Gemini skill\n",
+            ),
+            (
+                "command:gemini-review",
+                "command",
+                ".gemini",
+                "commands/review.toml",
+                ".gemini/commands/review.toml",
+                b"prompt = \"Review\"\n",
+            ),
+            (
+                "skill:shared-analysis",
+                "skill",
+                ".agents",
+                "skills/shared-analysis/SKILL.md",
+                ".agents/skills/shared-analysis/SKILL.md",
+                b"Shared skill\n",
+            ),
+        ];
+        let mut lockfile = String::from("version: 1\nschema: 2\nentities:\n");
+        let mut event_paths = Vec::new();
+        for (id, entity_type, location, lockfile_path, repo_path, contents) in cases {
+            let native_path = repo.join(repo_path);
+            create_parent(&native_path);
+            write_file(&native_path, contents);
+            let hash = if entity_type == "skill" {
+                let skill_root = native_path
+                    .parent()
+                    .unwrap_or_else(|| panic!("skill path should have a parent"));
+                let asset_path = skill_root.join("references/notes.md");
+                create_parent(&asset_path);
+                write_file(&asset_path, b"Notes\n");
+                event_paths.push(asset_path);
+                match skill_dir_hash_hex(skill_root) {
+                    Ok(hash) => hash,
+                    Err(error) => panic!("skill hash should be computed: {error}"),
+                }
+            } else {
+                match sha256_file_hex(&native_path) {
+                    Ok(hash) => hash,
+                    Err(error) => panic!("hash should be computed: {error}"),
+                }
+            };
+            lockfile.push_str(&format!(
+                "  {id}:\n    type: {entity_type}\n    locations:\n      {location}: {lockfile_path}\n    canonical_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n    emitted_native_sha256:\n      {location}: {hash}\n"
+            ));
+            event_paths.push(native_path);
+        }
+        write_file(&repo.join("agentmesh.lock"), lockfile.as_bytes());
+
+        let index = match SelfWriteIndex::load(&repo) {
+            Ok(index) => index,
+            Err(error) => panic!("self-write index should load: {error}"),
+        };
+        for path in &event_paths {
+            assert!(
+                index.matching_self_write(&repo, path).is_some(),
+                "expected self-write match for {} with entries {:?}",
+                path.display(),
+                index.entries
+            );
+        }
+
+        let options = WatchOptions {
+            debounce: Duration::from_millis(1),
+            vcs_throttle: Duration::from_millis(1),
+            ..WatchOptions::default()
+        };
+        let mut loop_state = ForegroundLoop::new(&options);
+        let expected_suppressed = event_paths.len();
+        let event = Event {
+            kind: EventKind::Any,
+            paths: event_paths,
+            attrs: Default::default(),
+        };
+        if let Err(error) = loop_state.observe_event(&repo, &options, &layout, event) {
+            panic!("event should be observed: {error}");
+        }
+
+        assert_eq!(loop_state.pending_event_count, 0);
+        assert!(loop_state.pending_paths.is_empty());
+        assert_eq!(loop_state.suppressed_self_write_count, expected_suppressed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_skill_paths_are_not_suppressed_as_self_writes() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir();
+        let repo = temp.path().join("repo");
+        create_dir(&repo);
+        let skill_path = repo.join(".codex/skills/release/SKILL.md");
+        create_parent(&skill_path);
+        write_file(&skill_path, b"Release skill\n");
+        let skill_root = skill_path
+            .parent()
+            .unwrap_or_else(|| panic!("skill path should have a parent"));
+        let hash = match skill_dir_hash_hex(skill_root) {
+            Ok(hash) => hash,
+            Err(error) => panic!("skill hash should be computed: {error}"),
+        };
+        write_file(
+            &repo.join("agentmesh.lock"),
+            format!(
+                r#"version: 1
+schema: 2
+entities:
+  skill:release:
+    type: skill
+    locations:
+      .codex: skills/release/SKILL.md
+    canonical_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    emitted_native_sha256:
+      .codex: {hash}
+"#
+            )
+            .as_bytes(),
+        );
+        let outside = temp.path().join("outside.md");
+        write_file(&outside, b"outside\n");
+        let symlink_path = skill_root.join("references/secret.md");
+        create_parent(&symlink_path);
+        symlink(&outside, &symlink_path)
+            .unwrap_or_else(|error| panic!("symlink should be created: {error}"));
+        let index = match SelfWriteIndex::load(&repo) {
+            Ok(index) => index,
+            Err(error) => panic!("self-write index should load: {error}"),
+        };
+
+        assert!(index.matching_self_write(&repo, &symlink_path).is_none());
+    }
+
+    #[test]
+    fn malformed_skill_lockfile_paths_do_not_create_suppression_roots() {
+        let temp = tempdir();
+        let repo = temp.path().join("repo");
+        create_dir(&repo);
+        let misplaced_skill = repo.join("SKILL.md");
+        write_file(&misplaced_skill, b"not a runtime skill\n");
+        write_file(
+            &repo.join("agentmesh.lock"),
+            r#"version: 1
+schema: 2
+entities:
+  skill:root:
+    type: skill
+    locations:
+      .codex: ../SKILL.md
+    canonical_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    emitted_native_sha256:
+      .codex: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+"#
+            .as_bytes(),
+        );
+
+        let index = match SelfWriteIndex::load(&repo) {
+            Ok(index) => index,
+            Err(error) => panic!("self-write index should load: {error}"),
+        };
+
+        assert!(index.entries.is_empty());
     }
 
     #[test]

@@ -71,7 +71,7 @@ pub enum LockfileError {
 pub const LOCKFILE_CONTENT_VERSION: u32 = 1;
 
 /// Current lockfile schema version.
-pub const LOCKFILE_SCHEMA_VERSION: u32 = 1;
+pub const LOCKFILE_SCHEMA_VERSION: u32 = 2;
 
 /// Highest lockfile schema version this build can read.
 pub const MAX_SUPPORTED_LOCKFILE_SCHEMA: u32 = LOCKFILE_SCHEMA_VERSION;
@@ -132,6 +132,9 @@ pub struct LockfileEntity {
     /// Canonical entity type.
     #[serde(rename = "type")]
     pub entity_type: EntityType,
+    /// Schema version for the canonical entity representation.
+    #[serde(default = "default_entity_schema")]
+    pub entity_schema: u32,
     /// Scope for instruction entities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
@@ -229,7 +232,9 @@ impl MigrationRegistry {
     /// Creates a registry that migrates to the current schema.
     #[must_use]
     pub fn current() -> Self {
-        Self::new(LOCKFILE_SCHEMA_VERSION)
+        let mut registry = Self::new(LOCKFILE_SCHEMA_VERSION);
+        registry.register(1, migrate_schema_1_to_2);
+        registry
     }
 
     /// Creates a registry that migrates to a specific schema.
@@ -260,6 +265,34 @@ impl MigrationRegistry {
 
         Ok(lockfile)
     }
+}
+
+/// Returns the current canonical schema for a new entity.
+#[must_use]
+pub const fn entity_schema_for_type(entity_type: EntityType) -> u32 {
+    match entity_type {
+        EntityType::Instructions | EntityType::Skill | EntityType::Subagent => 1,
+        EntityType::Rule
+        | EntityType::Prompt
+        | EntityType::Command
+        | EntityType::Hook
+        | EntityType::McpBinding
+        | EntityType::PermissionPolicy => 2,
+    }
+}
+
+fn default_entity_schema() -> u32 {
+    1
+}
+
+fn migrate_schema_1_to_2(mut lockfile: Lockfile) -> Result<Lockfile> {
+    lockfile.schema = 2;
+    for entity in lockfile.entities.values_mut() {
+        if entity.entity_schema == 0 {
+            entity.entity_schema = default_entity_schema();
+        }
+    }
+    Ok(lockfile)
 }
 
 /// Parses a lockfile from YAML and checks schema compatibility.
@@ -313,7 +346,8 @@ mod tests {
 
     use super::{
         AdapterDeclaration, AdapterMode, HookKind, LOCKFILE_SCHEMA_VERSION, Lockfile,
-        LockfileEntity, LockfileError, MigrationRegistry, parse_lockfile, serialize_lockfile,
+        LockfileEntity, LockfileError, MigrationRegistry, entity_schema_for_type, parse_lockfile,
+        serialize_lockfile,
     };
     use crate::EntityType;
     use crate::types::{EntityId, Hash, LocationKey, RuntimeName};
@@ -363,6 +397,7 @@ mod tests {
             entity_id("skill:security-review"),
             LockfileEntity {
                 entity_type: EntityType::Skill,
+                entity_schema: entity_schema_for_type(EntityType::Skill),
                 scope: None,
                 locations,
                 canonical_sha256: valid_hash(),
@@ -386,6 +421,39 @@ mod tests {
                 hooks: vec![HookKind::PostToolUse],
             },
         );
+        for (id, entity_type) in [
+            ("instructions:scoped:api-review", EntityType::Instructions),
+            ("rule:security", EntityType::Rule),
+            ("prompt:release-notes", EntityType::Prompt),
+            ("command:git:commit", EntityType::Command),
+            ("hook:gemini-project", EntityType::Hook),
+            ("mcp-binding:gemini-project", EntityType::McpBinding),
+            (
+                "permission-policy:gemini-project",
+                EntityType::PermissionPolicy,
+            ),
+            ("subagent:code-reviewer", EntityType::Subagent),
+        ] {
+            lockfile.entities.insert(
+                entity_id(id),
+                LockfileEntity {
+                    entity_type,
+                    entity_schema: entity_schema_for_type(entity_type),
+                    scope: if id.starts_with("instructions:scoped:") {
+                        Some("api-review".to_string())
+                    } else {
+                        None
+                    },
+                    locations: BTreeMap::new(),
+                    canonical_sha256: valid_hash(),
+                    emitted_native_sha256: BTreeMap::new(),
+                    lineage: Vec::new(),
+                    pending_conflict_resolution: None,
+                    rename_history: Vec::new(),
+                    id_pin: None,
+                },
+            );
+        }
 
         let serialized = match serialize_lockfile(&lockfile) {
             Ok(serialized) => serialized,
@@ -446,6 +514,7 @@ mod tests {
         let entity = LockfileEntity {
             entity_type: EntityType::Subagent,
             scope: None,
+            entity_schema: entity_schema_for_type(EntityType::Subagent),
             locations: BTreeMap::from([
                 (
                     location_key(".ai"),
@@ -487,5 +556,40 @@ mod tests {
         };
 
         assert_eq!(migrated.schema, 2);
+    }
+
+    #[test]
+    fn migrates_schema_one_lockfiles_without_rewriting_entities() {
+        let contents = r#"
+version: 1
+schema: 1
+entities:
+  instructions:root:
+    type: instructions
+    scope: root
+    canonical_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  skill:security-review:
+    type: skill
+    canonical_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"#;
+
+        let migrated = match parse_lockfile(contents) {
+            Ok(lockfile) => lockfile,
+            Err(error) => panic!("schema one lockfile should migrate: {error}"),
+        };
+
+        assert_eq!(migrated.schema, LOCKFILE_SCHEMA_VERSION);
+        assert_eq!(
+            migrated.entities[&entity_id("instructions:root")].entity_schema,
+            1
+        );
+        assert_eq!(
+            migrated.entities[&entity_id("skill:security-review")].entity_schema,
+            1
+        );
+        assert_eq!(
+            migrated.entities[&entity_id("instructions:root")].scope,
+            Some("root".to_string())
+        );
     }
 }

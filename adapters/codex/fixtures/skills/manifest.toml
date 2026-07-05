@@ -1,0 +1,58 @@
+[[fixture]]
+name = "codex-skill-directory"
+surface = "codex.skill"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "native/.codex/skills/repo-map/SKILL.md"
+fixture_root_path = "native/.codex/skills/repo-map"
+expected_canonical_id = "skill:repo-map"
+expected_emitted_path = ".codex/skills/repo-map/SKILL.md"
+expected_files = ["SKILL.md", "references/checklist.md"]
+expected_diagnostics = []
+
+[[fixture]]
+name = "shared-skill-directory"
+surface = "codex.shared-skill"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "shared/.agents/skills/shared-workflow/SKILL.md"
+fixture_root_path = "shared/.agents/skills/shared-workflow"
+expected_canonical_id = "skill:shared-workflow"
+expected_emitted_path = ".agents/skills/shared-workflow/SKILL.md"
+expected_files = ["SKILL.md", "references/gates.md"]
+expected_diagnostics = []
+expected_behaviors = ["shared skill path must import once when more than one runtime can read it"]
+
+[[fixture]]
+name = "codex-skill-invalid-frontmatter"
+surface = "codex.skill"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "invalid/.codex/skills/broken/SKILL.md"
+fixture_root_path = "invalid/.codex/skills/broken"
+expected_canonical_id = "skill:broken"
+expected_files = ["SKILL.md"]
+expected_diagnostics = ["failed to parse frontmatter"]
+
+[[fixture]]
+name = "shared-skill-invalid-frontmatter"
+surface = "codex.shared-skill"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "invalid-shared/.agents/skills/broken-shared/SKILL.md"
+fixture_root_path = "invalid-shared/.agents/skills/broken-shared"
+expected_canonical_id = "skill:broken-shared"
+expected_files = ["SKILL.md"]
+expected_diagnostics = ["failed to parse frontmatter"]

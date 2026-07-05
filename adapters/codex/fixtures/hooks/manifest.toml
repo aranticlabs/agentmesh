@@ -1,0 +1,38 @@
+[[fixture]]
+name = "project-hook"
+surface = "codex.project-hook"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/hooks"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "owned/.codex/hooks.json"
+expected_canonical_id = "hook:codex-project"
+expected_emitted_path = ".codex/hooks.json"
+expected_diagnostics = []
+
+[[fixture]]
+name = "third-party-project-hook"
+surface = "codex.project-hook"
+cases = ["unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/hooks"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "third-party/.codex/hooks.json"
+expected_canonical_id = "hook:codex-project"
+expected_emitted_path = ".codex/hooks.json"
+expected_diagnostics = []
+expected_behaviors = ["third-party hook config is synced as data only"]
+
+[[fixture]]
+name = "invalid-project-hook"
+surface = "codex.project-hook"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/hooks"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "invalid/.codex/hooks.json"
+expected_canonical_id = "hook:codex-project"
+expected_diagnostics = ["failed to parse hook overlay JSON"]

@@ -1,0 +1,63 @@
+[[fixture]]
+name = "project-hooks"
+surface = "claude.project-hooks"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/hooks"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "hooks/.claude/settings.json"
+expected_canonical_id = "hook:claude-project"
+expected_emitted_path = ".claude/settings.json"
+expected_diagnostics = []
+
+[[fixture]]
+name = "project-permissions"
+surface = "claude.project-permissions"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/settings"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "permissions/.claude/settings.json"
+expected_canonical_id = "permission-policy:claude-project"
+expected_emitted_path = ".claude/settings.json"
+expected_diagnostics = []
+
+[[fixture]]
+name = "combined-settings"
+surface = "claude.project-hooks"
+cases = ["round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/settings"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "combined/.claude/settings.json"
+expected_canonical_id = "hook:claude-project"
+expected_emitted_path = ".claude/settings.json"
+expected_diagnostics = []
+expected_behaviors = ["hook and permission sections share settings.json without overwriting each other"]
+
+[[fixture]]
+name = "invalid-hooks-json"
+surface = "claude.project-hooks"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/hooks"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "hook"
+fixture_file_path = "invalid/.claude/settings.json"
+expected_canonical_id = "hook:claude-project"
+expected_diagnostics = ["failed to parse hook overlay JSON"]
+
+[[fixture]]
+name = "invalid-permissions-json"
+surface = "claude.project-permissions"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/settings"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "invalid/.claude/settings.json"
+expected_canonical_id = "permission-policy:claude-project"
+expected_diagnostics = ["failed to parse hook overlay JSON"]

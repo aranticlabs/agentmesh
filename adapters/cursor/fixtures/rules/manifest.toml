@@ -1,0 +1,78 @@
+[[fixture]]
+name = "always-on-rule"
+surface = "cursor.project-rule"
+cases = ["minimum_valid", "all_supported_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "always/.cursor/rules/security.mdc"
+expected_canonical_id = "rule:security"
+expected_emitted_path = ".cursor/rules/security.mdc"
+expected_diagnostics = []
+
+[[fixture]]
+name = "path-scoped-rule"
+surface = "cursor.project-rule"
+cases = ["minimum_valid", "all_supported_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "scoped/.cursor/rules/api.mdc"
+expected_canonical_id = "instructions:scoped:api"
+expected_emitted_path = ".cursor/rules/api.mdc"
+expected_diagnostics = []
+
+[[fixture]]
+name = "manual-rule"
+surface = "cursor.project-rule"
+cases = ["minimum_valid", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "manual/.cursor/rules/manual-review.mdc"
+expected_canonical_id = "rule:manual-review"
+expected_emitted_path = ".cursor/rules/manual-review.mdc"
+expected_diagnostics = []
+expected_behaviors = ["plain MDC rule bodies have no native metadata syntax to reject when no frontmatter is present"]
+
+[[fixture]]
+name = "nested-rule"
+surface = "cursor.project-rule"
+cases = ["minimum_valid", "round_trip", "sync_check", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "nested/.cursor/rules/team/security.mdc"
+expected_canonical_id = "rule:team-security"
+expected_emitted_path = ".cursor/rules/team/security.mdc"
+expected_diagnostics = []
+
+[[fixture]]
+name = "unknown-frontmatter-preservation"
+surface = "cursor.project-rule"
+cases = ["unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "unknown/.cursor/rules/preserve-metadata.mdc"
+expected_canonical_id = "rule:preserve-metadata"
+expected_emitted_path = ".cursor/rules/preserve-metadata.mdc"
+expected_diagnostics = []
+expected_behaviors = ["unknown frontmatter is emitted only for Cursor-originated entities"]
+
+[[fixture]]
+name = "invalid-frontmatter"
+surface = "cursor.project-rule"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://cursor.com/docs/rules"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "invalid/.cursor/rules/broken.mdc"
+expected_canonical_id = "rule:broken"
+expected_diagnostics = ["failed to parse frontmatter"]

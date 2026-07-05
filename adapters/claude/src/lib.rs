@@ -20,22 +20,50 @@ use agentmesh_protocol::{
     InstallHooksResponse, InstalledHook, RemoveHooksRequest, RemoveHooksResponse, RuntimeMode,
     SkippedPath,
 };
-use serde_json::{Value as JsonValue, json};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use serde_norway::{Mapping as YamlMapping, Value as YamlValue};
 
 const SUPPORTED_ENTITIES: &[EntityType] = &[
     EntityType::Instructions,
+    EntityType::Rule,
+    EntityType::Command,
+    EntityType::Hook,
+    EntityType::McpBinding,
+    EntityType::PermissionPolicy,
     EntityType::Skill,
     EntityType::Subagent,
 ];
 
-const ALLOWED_READ_PATHS: &[&str] = &[".claude/**", "CLAUDE.md"];
-const ALLOWED_WRITE_PATHS: &[&str] = &[".claude/**", "CLAUDE.md"];
+const ALLOWED_READ_PATHS: &[&str] = &[".claude/**", ".mcp.json", "CLAUDE.md"];
+const ALLOWED_WRITE_PATHS: &[&str] = &[".claude/**", ".mcp.json", "CLAUDE.md"];
 const MARKDOWN_FORMATS: &[&str] = &["markdown"];
-const FORMAT_TRANSLATIONS: &[FormatTranslation] = &[FormatTranslation {
-    entity_type: EntityType::Subagent,
-    formats: MARKDOWN_FORMATS,
-}];
+const JSON_FORMATS: &[&str] = &["json"];
+const FORMAT_TRANSLATIONS: &[FormatTranslation] = &[
+    FormatTranslation {
+        entity_type: EntityType::Rule,
+        formats: MARKDOWN_FORMATS,
+    },
+    FormatTranslation {
+        entity_type: EntityType::Command,
+        formats: MARKDOWN_FORMATS,
+    },
+    FormatTranslation {
+        entity_type: EntityType::Hook,
+        formats: JSON_FORMATS,
+    },
+    FormatTranslation {
+        entity_type: EntityType::McpBinding,
+        formats: JSON_FORMATS,
+    },
+    FormatTranslation {
+        entity_type: EntityType::PermissionPolicy,
+        formats: JSON_FORMATS,
+    },
+    FormatTranslation {
+        entity_type: EntityType::Subagent,
+        formats: MARKDOWN_FORMATS,
+    },
+];
 
 /// Claude adapter handle.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,6 +79,10 @@ impl Adapter for ClaudeAdapter {
             workspace_root.join(".claude"),
             workspace_root.join(".claude/skills"),
             workspace_root.join(".claude/agents"),
+            workspace_root.join(".claude/rules"),
+            workspace_root.join(".claude/commands"),
+            workspace_root.join(".claude/settings.json"),
+            workspace_root.join(".mcp.json"),
             workspace_root.join("CLAUDE.md"),
         ];
         let files = evidence
@@ -73,6 +105,7 @@ impl Adapter for ClaudeAdapter {
         let mut skipped = Vec::new();
 
         let instructions_path = workspace_root.join("CLAUDE.md");
+        let mut imported_root_instructions = false;
         if selected(filter, &[PathBuf::from("CLAUDE.md")])
             && is_regular_file(&workspace_root, &instructions_path)?
         {
@@ -85,8 +118,51 @@ impl Adapter for ClaudeAdapter {
                 PathBuf::from("AGENTS.md"),
                 PathBuf::from("CLAUDE.md"),
             )?);
+            imported_root_instructions = true;
         }
 
+        let dot_claude_instructions_path = request.runtime_dir.join("CLAUDE.md");
+        let dot_claude_instructions_relative = PathBuf::from(".claude/CLAUDE.md");
+        if !imported_root_instructions
+            && selected(
+                filter,
+                std::slice::from_ref(&dot_claude_instructions_relative),
+            )
+            && is_regular_file(&workspace_root, &dot_claude_instructions_path)?
+        {
+            entities.push(import_markdown_entity(
+                &workspace_root,
+                &dot_claude_instructions_path,
+                EntityType::Instructions,
+                "instructions:root".to_string(),
+                Some("root".to_string()),
+                PathBuf::from("AGENTS.md"),
+                dot_claude_instructions_relative,
+            )?);
+        }
+
+        import_rules(
+            &workspace_root,
+            &request.runtime_dir.join("rules"),
+            filter,
+            &mut entities,
+            &mut skipped,
+        )?;
+        import_commands(
+            &workspace_root,
+            &request.runtime_dir.join("commands"),
+            filter,
+            &mut entities,
+            &mut skipped,
+        )?;
+        import_settings_json(
+            &workspace_root,
+            &request.runtime_dir.join("settings.json"),
+            filter,
+            &mut entities,
+            &mut skipped,
+        )?;
+        import_mcp_json(&workspace_root, filter, &mut entities, &mut skipped)?;
         import_skills(
             &workspace_root,
             &request.runtime_dir.join("skills"),
@@ -132,14 +208,85 @@ impl Adapter for ClaudeAdapter {
                         ));
                         continue;
                     };
+                    let is_root = is_root_instruction(&entity.id, entity.scope.as_deref());
+                    let frontmatter = claude_frontmatter_for_emit(&entity, !is_root);
+                    let rendered = render_markdown_with_overrides(
+                        &content,
+                        &frontmatter,
+                        &entity.overrides,
+                        if is_root { &[] } else { &["globs"] },
+                    )?;
+                    let path = if is_root {
+                        workspace_root.join("CLAUDE.md")
+                    } else if let Some(source_path) =
+                        native_source_path(&entity, ".claude/rules", "md")
+                    {
+                        workspace_root.join(source_path)
+                    } else {
+                        request
+                            .runtime_dir
+                            .join("rules")
+                            .join(format!("{}.md", scoped_instruction_slug(&entity.id)))
+                    };
+                    write_atomic(&path, rendered.as_bytes())?;
+                    files_written.push(workspace_relative(&workspace_root, &path)?);
+                }
+                EntityType::Rule => {
+                    let slug = slug_for_entity(&entity.id, &entity.frontmatter);
+                    let Some(content) = first_file_content(&entity.files) else {
+                        skipped.push(skipped_entity(entity.id, "rule entity has no files"));
+                        continue;
+                    };
                     let rendered = render_markdown_with_overrides(
                         &content,
                         &entity.frontmatter,
                         &entity.overrides,
+                        &[],
                     )?;
-                    let path = workspace_root.join("CLAUDE.md");
-                    write_atomic(&path, rendered.as_bytes())?;
-                    files_written.push(PathBuf::from("CLAUDE.md"));
+                    let target = native_source_path(&entity, ".claude/rules", "md")
+                        .map(|path| workspace_root.join(path))
+                        .unwrap_or_else(|| {
+                            request.runtime_dir.join("rules").join(format!("{slug}.md"))
+                        });
+                    write_atomic(&target, rendered.as_bytes())?;
+                    files_written.push(workspace_relative(&workspace_root, &target)?);
+                }
+                EntityType::Command => {
+                    let Some(content) = first_file_content(&entity.files) else {
+                        skipped.push(skipped_entity(entity.id, "command entity has no files"));
+                        continue;
+                    };
+                    let rendered = render_markdown_with_overrides(
+                        &content,
+                        &entity.frontmatter,
+                        &entity.overrides,
+                        &[],
+                    )?;
+                    let target = native_source_path(&entity, ".claude/commands", "md")
+                        .map(|path| workspace_root.join(path))
+                        .unwrap_or_else(|| {
+                            request
+                                .runtime_dir
+                                .join("commands")
+                                .join(command_runtime_file(&entity.id, "md"))
+                        });
+                    write_atomic(&target, rendered.as_bytes())?;
+                    files_written.push(workspace_relative(&workspace_root, &target)?);
+                }
+                EntityType::Hook => {
+                    let target = request.runtime_dir.join("settings.json");
+                    merge_json_section(&target, "hooks", &entity)?;
+                    files_written.push(workspace_relative(&workspace_root, &target)?);
+                }
+                EntityType::McpBinding => {
+                    let target = workspace_root.join(".mcp.json");
+                    merge_json_section(&target, "mcpServers", &entity)?;
+                    files_written.push(PathBuf::from(".mcp.json"));
+                }
+                EntityType::PermissionPolicy => {
+                    let target = request.runtime_dir.join("settings.json");
+                    merge_json_section(&target, "permissions", &entity)?;
+                    files_written.push(workspace_relative(&workspace_root, &target)?);
                 }
                 EntityType::Skill => {
                     let slug = slug_for_entity(&entity.id, &entity.frontmatter);
@@ -164,6 +311,7 @@ impl Adapter for ClaudeAdapter {
                                 &content,
                                 &entity.frontmatter,
                                 &entity.overrides,
+                                &[],
                             )?;
                             bytes = rendered.into_bytes();
                         }
@@ -182,6 +330,7 @@ impl Adapter for ClaudeAdapter {
                         &content,
                         &entity.frontmatter,
                         &entity.overrides,
+                        &[],
                     )?;
                     let target = request
                         .runtime_dir
@@ -189,6 +338,12 @@ impl Adapter for ClaudeAdapter {
                         .join(format!("{slug}.md"));
                     write_atomic(&target, rendered.as_bytes())?;
                     files_written.push(workspace_relative(&workspace_root, &target)?);
+                }
+                unsupported => {
+                    skipped.push(skipped_entity(
+                        entity.id,
+                        format!("{} entity is not supported", unsupported.as_str()),
+                    ));
                 }
             }
         }
@@ -226,6 +381,309 @@ pub const fn metadata() -> AdapterMetadata {
         allowed_write_paths: ALLOWED_WRITE_PATHS,
         format_translations: FORMAT_TRANSLATIONS,
     }
+}
+
+fn import_rules(
+    workspace_root: &Path,
+    rules_root: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    match is_regular_dir(workspace_root, rules_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, rules_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
+    }
+
+    import_rules_in_dir(
+        workspace_root,
+        rules_root,
+        rules_root,
+        filter,
+        entities,
+        skipped,
+    )
+}
+
+fn import_rules_in_dir(
+    workspace_root: &Path,
+    rules_root: &Path,
+    dir: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    for entry in read_dir_sorted(dir)? {
+        let path = entry.path();
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked rule path is not supported".to_string(),
+            });
+            continue;
+        }
+        if file_type.is_dir() {
+            import_rules_in_dir(workspace_root, rules_root, &path, filter, entities, skipped)?;
+            continue;
+        }
+        if !file_type.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let source_relative = workspace_relative(workspace_root, &path)?;
+        if !selected(filter, std::slice::from_ref(&source_relative)) {
+            continue;
+        }
+
+        let slug = path_slug(rules_root, &path);
+        let content = match read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: source_relative,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let frontmatter = match frontmatter_json_for_path(&source_relative, &content) {
+            Ok(frontmatter) => frontmatter,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: source_relative,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let (entity_type, id, scope, canonical_path) = if frontmatter.contains_key("paths") {
+            let scope = match scope_from_paths(&frontmatter, &slug) {
+                Ok(scope) => scope,
+                Err(reason) => {
+                    skipped.push(SkippedPath {
+                        path: source_relative,
+                        reason,
+                    });
+                    continue;
+                }
+            };
+            let slug = scope
+                .as_deref()
+                .and_then(scope_directory)
+                .map(|path| slugify(&path.to_string_lossy()))
+                .unwrap_or(slug);
+            (
+                EntityType::Instructions,
+                format!("instructions:scoped:{slug}"),
+                scope,
+                PathBuf::from("instructions").join(format!("{slug}.md")),
+            )
+        } else {
+            (
+                EntityType::Rule,
+                format!("rule:{slug}"),
+                None,
+                PathBuf::from("rules").join(format!("{slug}.md")),
+            )
+        };
+
+        entities.push(import_markdown_entity(
+            workspace_root,
+            &path,
+            entity_type,
+            id,
+            scope,
+            canonical_path,
+            source_relative,
+        )?);
+    }
+
+    Ok(())
+}
+
+fn import_commands(
+    workspace_root: &Path,
+    commands_root: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    match is_regular_dir(workspace_root, commands_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, commands_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
+    }
+
+    import_commands_in_dir(
+        workspace_root,
+        commands_root,
+        commands_root,
+        filter,
+        entities,
+        skipped,
+    )
+}
+
+fn import_commands_in_dir(
+    workspace_root: &Path,
+    commands_root: &Path,
+    dir: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    for entry in read_dir_sorted(dir)? {
+        let path = entry.path();
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked command path is not supported".to_string(),
+            });
+            continue;
+        }
+        if file_type.is_dir() {
+            import_commands_in_dir(
+                workspace_root,
+                commands_root,
+                &path,
+                filter,
+                entities,
+                skipped,
+            )?;
+            continue;
+        }
+        if !file_type.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let source_relative = workspace_relative(workspace_root, &path)?;
+        if !selected(filter, std::slice::from_ref(&source_relative)) {
+            continue;
+        }
+        let slug = command_slug(commands_root, &path);
+        let canonical_path =
+            PathBuf::from("commands").join(command_runtime_file(&format!("command:{slug}"), "md"));
+        let entity = match import_markdown_entity(
+            workspace_root,
+            &path,
+            EntityType::Command,
+            format!("command:{slug}"),
+            None,
+            canonical_path,
+            source_relative,
+        ) {
+            Ok(entity) => entity,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: workspace_relative(workspace_root, &path)?,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        entities.push(entity);
+    }
+
+    Ok(())
+}
+
+fn import_settings_json(
+    workspace_root: &Path,
+    settings_path: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    let source_relative = PathBuf::from(".claude/settings.json");
+    if !selected(filter, std::slice::from_ref(&source_relative))
+        || !is_regular_file(workspace_root, settings_path)?
+    {
+        return Ok(());
+    }
+    let value = match read_json_object(settings_path) {
+        Ok(value) => value,
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: source_relative,
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
+    };
+    if let Some(hooks) = value.get("hooks") {
+        entities.push(import_json_section_entity(
+            settings_path,
+            source_relative.clone(),
+            EntityType::Hook,
+            "hook:claude-project",
+            PathBuf::from("hooks/claude-project.json"),
+            "hooks",
+            hooks.clone(),
+        )?);
+    }
+    if let Some(permissions) = value.get("permissions") {
+        entities.push(import_json_section_entity(
+            settings_path,
+            source_relative,
+            EntityType::PermissionPolicy,
+            "permission-policy:claude-project",
+            PathBuf::from("permission-policies/claude-project.json"),
+            "permissions",
+            permissions.clone(),
+        )?);
+    }
+    Ok(())
+}
+
+fn import_mcp_json(
+    workspace_root: &Path,
+    filter: Option<&ImportFilter>,
+    entities: &mut Vec<ImportedEntity>,
+    skipped: &mut Vec<SkippedPath>,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    let source_path = workspace_root.join(".mcp.json");
+    let source_relative = PathBuf::from(".mcp.json");
+    if !selected(filter, std::slice::from_ref(&source_relative))
+        || !is_regular_file(workspace_root, &source_path)?
+    {
+        return Ok(());
+    }
+    let value = match read_json_object(&source_path) {
+        Ok(value) => value,
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: source_relative,
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
+    };
+    entities.push(import_json_entity(
+        &source_path,
+        source_relative,
+        EntityType::McpBinding,
+        "mcp-binding:project",
+        PathBuf::from("mcp-bindings/project.json"),
+        value,
+    )?);
+    Ok(())
 }
 
 fn import_skills(
@@ -442,6 +900,71 @@ fn import_markdown_entity(
     })
 }
 
+fn import_json_section_entity(
+    path: &Path,
+    source_path: PathBuf,
+    entity_type: EntityType,
+    id: &str,
+    canonical_path: PathBuf,
+    section_key: &str,
+    section_value: JsonValue,
+) -> agentmesh_adapter_sdk_rust::Result<ImportedEntity> {
+    let mut object = JsonMap::new();
+    object.insert(section_key.to_string(), section_value);
+    import_json_entity(
+        path,
+        source_path,
+        entity_type,
+        id,
+        canonical_path,
+        JsonValue::Object(object),
+    )
+}
+
+fn import_json_entity(
+    path: &Path,
+    source_path: PathBuf,
+    entity_type: EntityType,
+    id: &str,
+    canonical_path: PathBuf,
+    value: JsonValue,
+) -> agentmesh_adapter_sdk_rust::Result<ImportedEntity> {
+    let content = render_json(&value)?;
+    let file_key = canonical_path
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| canonical_path.clone());
+    let files = BTreeMap::from([(file_key, EntityFile::utf8(content.clone()))]);
+
+    Ok(ImportedEntity {
+        id: id.to_string(),
+        entity_type,
+        scope: None,
+        canonical_path,
+        files,
+        frontmatter: BTreeMap::new(),
+        canonical_sha256: sha256_bytes(content.as_bytes()),
+        source_path,
+        source_mtime: mtime_string(path)?,
+    })
+}
+
+fn render_json(value: &JsonValue) -> agentmesh_adapter_sdk_rust::Result<String> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|source| {
+        AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!("failed to serialize JSON entity: {source}"),
+        )
+    })?;
+    bytes.push(b'\n');
+    String::from_utf8(bytes).map_err(|source| {
+        AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!("failed to encode JSON entity: {source}"),
+        )
+    })
+}
+
 fn first_file_content(files: &BTreeMap<PathBuf, EntityFile>) -> Option<String> {
     for key in [
         Path::new("SKILL.md"),
@@ -455,15 +978,231 @@ fn first_file_content(files: &BTreeMap<PathBuf, EntityFile>) -> Option<String> {
     files.values().find_map(file_text)
 }
 
+fn is_root_instruction(id: &str, scope: Option<&str>) -> bool {
+    id == "instructions:root" || scope == Some("root")
+}
+
+fn scoped_instruction_slug(id: &str) -> String {
+    id.strip_prefix("instructions:scoped:")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| slugify(id))
+}
+
+fn command_runtime_file(id: &str, extension: &str) -> PathBuf {
+    let slug = id.strip_prefix("command:").unwrap_or(id);
+    path_from_colon_slug(slug, extension)
+}
+
+fn path_from_colon_slug(slug: &str, extension: &str) -> PathBuf {
+    let mut parts = slug.split(':').peekable();
+    let mut path = PathBuf::new();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_some() {
+            path.push(part);
+        } else {
+            path.push(format!("{part}.{extension}"));
+        }
+    }
+    path
+}
+
+fn path_slug(root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut parts = relative
+        .iter()
+        .filter_map(|part| part.to_str())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(last) = parts.last_mut()
+        && let Some(stem) = Path::new(last)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(ToString::to_string)
+    {
+        *last = stem;
+    }
+    slugify(&parts.join("-"))
+}
+
+fn command_slug(root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut parts = relative
+        .iter()
+        .filter_map(|part| part.to_str())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(last) = parts.last_mut()
+        && let Some(stem) = Path::new(last)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(ToString::to_string)
+    {
+        *last = stem;
+    }
+    parts
+        .into_iter()
+        .map(|part| slugify(&part))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn scope_from_paths(
+    frontmatter: &BTreeMap<String, JsonValue>,
+    fallback_slug: &str,
+) -> Result<Option<String>, String> {
+    match frontmatter.get("paths") {
+        Some(JsonValue::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+        Some(JsonValue::Array(values)) => {
+            let scopes = values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .collect::<Vec<_>>();
+            if scopes.len() > 1 {
+                return Err(
+                    "Claude rule paths with multiple scopes cannot be represented losslessly"
+                        .to_string(),
+                );
+            }
+            Ok(scopes
+                .first()
+                .map(|scope| (*scope).to_string())
+                .or_else(|| Some(fallback_slug.to_string())))
+        }
+        _ => Ok(Some(fallback_slug.to_string())),
+    }
+}
+
+fn scope_directory(scope: &str) -> Option<PathBuf> {
+    let trimmed = scope.trim().trim_matches('/');
+    let trimmed = trimmed
+        .strip_suffix("/**")
+        .or_else(|| trimmed.strip_suffix("/*"))
+        .unwrap_or(trimmed);
+    if trimmed.contains(['*', '?', '[', ']']) {
+        return None;
+    }
+    if trimmed.is_empty() || trimmed == "root" {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if is_safe_relative(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn native_source_path(
+    entity: &agentmesh_protocol::EmitEntity,
+    required_prefix: &str,
+    extension: &str,
+) -> Option<PathBuf> {
+    let path = entity.source_path.as_ref()?;
+    if !is_safe_relative(path) || !path.starts_with(required_prefix) {
+        return None;
+    }
+    if path.extension().and_then(|value| value.to_str()) != Some(extension) {
+        return None;
+    }
+    Some(path.clone())
+}
+
+fn merge_json_section(
+    target: &Path,
+    section_key: &str,
+    entity: &agentmesh_protocol::EmitEntity,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    let mut existing = read_json_object(target)?;
+    let payload = json_object_from_entity(entity, section_key)?;
+    let replacement = payload
+        .get(section_key)
+        .cloned()
+        .unwrap_or(JsonValue::Object(payload));
+    let Some(existing_object) = existing.as_object_mut() else {
+        return Err(AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            "settings JSON root must be an object",
+        ));
+    };
+    let merged = merge_json_section_value(existing_object.remove(section_key), replacement);
+    existing_object.insert(section_key.to_string(), merged);
+    write_json_pretty(target, &existing)
+}
+
+fn merge_json_section_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
+    match (existing, replacement) {
+        (Some(JsonValue::Object(mut existing)), JsonValue::Object(replacement)) => {
+            existing.extend(replacement);
+            JsonValue::Object(existing)
+        }
+        (_, replacement) => replacement,
+    }
+}
+
+fn json_object_from_entity(
+    entity: &agentmesh_protocol::EmitEntity,
+    label: &str,
+) -> agentmesh_adapter_sdk_rust::Result<JsonMap<String, JsonValue>> {
+    let Some(content) = first_file_content(&entity.files) else {
+        return Err(AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!("{label} entity has no files"),
+        ));
+    };
+    let value = serde_json::from_str::<JsonValue>(&content).map_err(|source| {
+        AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!("failed to parse {label} JSON: {source}"),
+        )
+    })?;
+    match value {
+        JsonValue::Object(object) => Ok(object),
+        _ => Err(AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            format!("{label} JSON root must be an object"),
+        )),
+    }
+}
+
+fn claude_frontmatter_for_emit(
+    entity: &agentmesh_protocol::EmitEntity,
+    scoped_instruction: bool,
+) -> BTreeMap<String, JsonValue> {
+    let mut frontmatter = entity.frontmatter.clone();
+    if scoped_instruction {
+        frontmatter.remove("globs");
+        if !frontmatter.contains_key("paths")
+            && let Some(scope) = entity.scope.as_deref().filter(|scope| *scope != "root")
+        {
+            frontmatter.insert(
+                "paths".to_string(),
+                JsonValue::Array(vec![JsonValue::String(scope.to_string())]),
+            );
+        }
+    }
+    frontmatter
+}
+
 fn render_markdown_with_overrides(
     content: &str,
     frontmatter: &BTreeMap<String, JsonValue>,
     overrides: &BTreeMap<String, JsonValue>,
+    excluded_frontmatter: &[&str],
 ) -> agentmesh_adapter_sdk_rust::Result<String> {
-    if frontmatter.is_empty() && overrides.is_empty() && !content.starts_with("---\n") {
+    if frontmatter.is_empty()
+        && overrides.is_empty()
+        && excluded_frontmatter.is_empty()
+        && !content.starts_with("---\n")
+    {
         return Ok(content.to_string());
     }
     let mut document = parse_frontmatter(content)?;
+    for key in excluded_frontmatter {
+        document
+            .frontmatter
+            .remove(YamlValue::String((*key).to_string()));
+    }
     for (key, value) in frontmatter {
         document
             .frontmatter
@@ -473,6 +1212,11 @@ fn render_markdown_with_overrides(
         document
             .frontmatter
             .insert(YamlValue::String(key.clone()), json_to_yaml(value)?);
+    }
+    for key in excluded_frontmatter {
+        document
+            .frontmatter
+            .remove(YamlValue::String((*key).to_string()));
     }
     compose_frontmatter(&document)
 }
@@ -743,6 +1487,7 @@ mod tests {
                 id: "skill:security-review".to_string(),
                 entity_type: agentmesh_protocol::EntityType::Skill,
                 scope: None,
+                source_path: None,
                 files,
                 frontmatter: BTreeMap::new(),
                 overrides: BTreeMap::from([("model".to_string(), json!("opus"))]),
@@ -831,6 +1576,7 @@ mod tests {
                 id: "skill:security-review".to_string(),
                 entity_type: agentmesh_protocol::EntityType::Skill,
                 scope: None,
+                source_path: None,
                 files,
                 frontmatter: BTreeMap::new(),
                 overrides: BTreeMap::new(),
@@ -883,6 +1629,218 @@ mod tests {
             "$.hooks.PostToolUse[0]"
         );
         assert_eq!(hook_count, 1);
+    }
+
+    #[test]
+    fn imports_claude_v02_project_surfaces() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(root.join("CLAUDE.md"), "# Instructions\n");
+        write(
+            root.join(".claude/rules/security.md"),
+            "---\ndescription: Security\n---\nCheck input boundaries.\n",
+        );
+        write(
+            root.join(".claude/rules/api.md"),
+            "---\npaths:\n  - packages/api/**\n---\nUse API conventions.\n",
+        );
+        write(
+            root.join(".claude/commands/git/commit.md"),
+            "---\ndescription: Commit message\n---\nDraft a commit message.\n",
+        );
+        write(
+            root.join(".claude/settings.json"),
+            r#"{"hooks":{"PostToolUse":[]},"permissions":{"allow":["Bash(git status:*)"]},"theme":"dark"}"#,
+        );
+        write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{"filesystem":{"command":"node","args":["server.js"]}}}"#,
+        );
+
+        let adapter = ClaudeAdapter;
+        let imported = adapter
+            .import(ImportRequest {
+                canonical_dir: root.join(".ai"),
+                runtime_dir: root.join(".claude"),
+                filter: None,
+            })
+            .unwrap_or_else(|error| panic!("import should succeed: {error}"));
+        let ids = imported
+            .entities
+            .iter()
+            .map(|entity| entity.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"rule:security"));
+        assert!(ids.contains(&"instructions:scoped:packages-api"));
+        assert!(ids.contains(&"command:git:commit"));
+        assert!(ids.contains(&"hook:claude-project"));
+        assert!(ids.contains(&"permission-policy:claude-project"));
+        assert!(ids.contains(&"mcp-binding:project"));
+        let scoped = imported
+            .entities
+            .iter()
+            .find(|entity| entity.id == "instructions:scoped:packages-api")
+            .unwrap_or_else(|| panic!("scoped rule should be imported"));
+        assert_eq!(scoped.scope.as_deref(), Some("packages/api/**"));
+    }
+
+    #[test]
+    fn skips_claude_rule_with_multiple_path_scopes() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".claude/rules/multi.md"),
+            "---\npaths:\n  - packages/api/**\n  - packages/web/**\n---\nUse package conventions.\n",
+        );
+
+        let imported = ClaudeAdapter
+            .import(ImportRequest {
+                canonical_dir: root.join(".ai"),
+                runtime_dir: root.join(".claude"),
+                filter: None,
+            })
+            .unwrap_or_else(|error| panic!("import should succeed: {error}"));
+
+        assert!(imported.entities.is_empty());
+        assert!(imported.skipped.iter().any(|skipped| {
+            skipped.path == Path::new(".claude/rules/multi.md")
+                && skipped.reason.contains("multiple scopes")
+        }));
+    }
+
+    #[test]
+    fn emits_claude_v02_surfaces_without_clobbering_shared_settings() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(root.join(".claude/settings.json"), r#"{"theme":"dark"}"#);
+        let adapter = ClaudeAdapter;
+
+        let response = adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".claude"),
+                mode: RuntimeMode::Managed,
+                entities: vec![
+                    EmitEntity {
+                        id: "instructions:scoped:packages-api".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::Instructions,
+                        scope: Some("packages/api/**".to_string()),
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("AGENTS.md"),
+                            file("Use API conventions.\n"),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                    EmitEntity {
+                        id: "command:git:commit".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::Command,
+                        scope: None,
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("commit.md"),
+                            file("Draft a commit message.\n"),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                    EmitEntity {
+                        id: "hook:claude-project".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::Hook,
+                        scope: None,
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("claude-project.json"),
+                            file(r#"{"hooks":{"PostToolUse":[]}}"#),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                    EmitEntity {
+                        id: "permission-policy:claude-project".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::PermissionPolicy,
+                        scope: None,
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("claude-project.json"),
+                            file(r#"{"permissions":{"allow":["Bash(git status:*)"]}}"#),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                ],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        assert!(response.skipped.is_empty());
+        assert!(
+            response
+                .files_written
+                .contains(&PathBuf::from(".claude/rules/packages-api.md"))
+        );
+        assert!(
+            response
+                .files_written
+                .contains(&PathBuf::from(".claude/commands/git/commit.md"))
+        );
+        let scoped = read(root.join(".claude/rules/packages-api.md"));
+        assert!(scoped.contains("paths:"));
+        assert!(!scoped.contains("globs:"));
+        let settings = read(root.join(".claude/settings.json"));
+        assert!(settings.contains("\"theme\": \"dark\""));
+        assert!(settings.contains("\"hooks\""));
+        assert!(settings.contains("\"permissions\""));
+    }
+
+    #[test]
+    fn emits_claude_mcp_binding_without_clobbering_other_servers() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{"filesystem":{"command":"old-node"},"browser":{"command":"browser-server"}},"metadata":{"owner":"user"}}"#,
+        );
+        let adapter = ClaudeAdapter;
+
+        adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".claude"),
+                mode: RuntimeMode::Managed,
+                entities: vec![EmitEntity {
+                    id: "mcp-binding:project".to_string(),
+                    entity_type: agentmesh_protocol::EntityType::McpBinding,
+                    scope: None,
+                    source_path: None,
+                    files: BTreeMap::from([(
+                        PathBuf::from("project.json"),
+                        file(r#"{"mcpServers":{"filesystem":{"command":"node","args":["server.js"]}}}"#),
+                    )]),
+                    frontmatter: BTreeMap::new(),
+                    overrides: BTreeMap::new(),
+                }],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        let mcp = read(root.join(".mcp.json"));
+        assert!(mcp.contains("\"filesystem\""));
+        assert!(mcp.contains("\"command\": \"node\""));
+        assert!(mcp.contains("\"browser\""));
+        assert!(mcp.contains("\"browser-server\""));
+        assert!(mcp.contains("\"owner\": \"user\""));
+        assert!(!mcp.contains("old-node"));
     }
 
     proptest! {
@@ -947,6 +1905,7 @@ mod tests {
                 id: entity.id,
                 entity_type: entity.entity_type,
                 scope: entity.scope,
+                source_path: Some(entity.source_path),
                 files: entity.files,
                 frontmatter: entity.frontmatter,
                 overrides: BTreeMap::new(),
@@ -988,10 +1947,10 @@ mod tests {
 
     fn write(path: impl AsRef<Path>, content: &str) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");
@@ -1000,10 +1959,10 @@ mod tests {
 
     fn write_bytes(path: impl AsRef<Path>, content: &[u8]) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");

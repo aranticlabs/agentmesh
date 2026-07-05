@@ -1,0 +1,5 @@
+# Gates
+
+- Format.
+- Typecheck.
+- Test.

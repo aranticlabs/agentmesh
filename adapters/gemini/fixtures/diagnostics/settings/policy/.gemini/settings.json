@@ -1,0 +1,4 @@
+{
+  "policyPaths": [".gemini/policies"],
+  "adminPolicyPaths": []
+}

@@ -5,7 +5,9 @@ AGENTMESH_VERSION="${AGENTMESH_VERSION:-latest}"
 AGENTMESH_BASE_URL="${AGENTMESH_BASE_URL:-https://github.com/aranticlabs/agentmesh/releases/download}"
 AGENTMESH_RELEASE_API_URL="${AGENTMESH_RELEASE_API_URL:-https://api.github.com/repos/aranticlabs/agentmesh/releases/latest}"
 COSIGN_VERSION="${AGENTMESH_COSIGN_VERSION:-v2.6.3}"
-COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*}"
+STABLE_COSIGN_CERTIFICATE_IDENTITY_REGEXP="^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
+DEV_COSIGN_CERTIFICATE_IDENTITY_REGEXP="^https://github.com/aranticlabs/agentmesh/.github/workflows/dev-release.yml@refs/heads/dev$"
+COSIGN_CERTIFICATE_IDENTITY_REGEXP="${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-$STABLE_COSIGN_CERTIFICATE_IDENTITY_REGEXP}"
 COSIGN_CERTIFICATE_OIDC_ISSUER="${AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 SPINNER_PID=""
 STABLE_VERSION=""
@@ -171,6 +173,7 @@ detect_platform() {
 release_tag() {
   case "$channel" in
     stable) printf 'v%s\n' "$(stable_version)" ;;
+    dev) printf 'dev\n' ;;
     nightly) printf 'nightly\n' ;;
     *)
       echo "unsupported channel: $channel" >&2
@@ -183,6 +186,7 @@ artifact_name() {
   platform="$1"
   case "$channel" in
     stable) printf 'agentmesh-v%s-%s.tar.gz\n' "$(stable_version)" "$platform" ;;
+    dev) printf 'agentmesh-dev-%s.tar.gz\n' "$platform" ;;
     nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
   esac
 }
@@ -191,6 +195,7 @@ smoke_artifact_name() {
   platform="$1"
   case "$channel" in
     stable) printf 'agentmesh-stable-%s.tar.gz\n' "$platform" ;;
+    dev) printf 'agentmesh-dev-%s.tar.gz\n' "$platform" ;;
     nightly) printf 'agentmesh-nightly-%s.tar.gz\n' "$platform" ;;
   esac
 }
@@ -587,7 +592,7 @@ install_archive() {
   esac
 }
 
-channel="stable"
+channel="${AGENTMESH_CHANNEL:-stable}"
 command="install"
 verify_file=""
 verify_expected=""
@@ -655,6 +660,10 @@ while [ "$#" -gt 0 ]; do
       channel="stable"
       shift
       ;;
+    --channel=dev)
+      channel="dev"
+      shift
+      ;;
     --channel=nightly)
       channel="nightly"
       shift
@@ -669,6 +678,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -z "${AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-}" ] && [ "$channel" = "dev" ]; then
+  COSIGN_CERTIFICATE_IDENTITY_REGEXP="$DEV_COSIGN_CERTIFICATE_IDENTITY_REGEXP"
+fi
 
 case "$command" in
   print-platform|verify-sha256|verify-sha256sums|verify-sha256sums-signature|help|upgrade-help|smoke) ;;
@@ -685,9 +698,9 @@ case "$command" in
 AgentMesh installer
 
 Usage:
-  install.sh [--channel=stable|--channel=nightly] [--install-dir=<path>]
+  install.sh [--channel=stable|dev|nightly] [--install-dir=<path>]
   install.sh --print-platform
-  install.sh --print-url [--channel=stable|--channel=nightly]
+  install.sh --print-url [--channel=stable|dev|nightly]
   install.sh --verify-sha256 <file> <expected-sha256>
   install.sh --verify-sha256sums <file> <SHA256SUMS> <artifact-name>
   install.sh --verify-sha256sums-signature <SHA256SUMS> <SHA256SUMS.sig> <SHA256SUMS.bundle>
@@ -698,7 +711,7 @@ The installer downloads the platform archive, verifies it against SHA256SUMS,
 verifies the SHA256SUMS signature with cosign, installs the single binary, and
 checks that the installed binary launches. Stable installs resolve the latest
 GitHub release by default. Set AGENTMESH_VERSION=x.y.z to install a specific
-stable version.
+stable version. Dev installs use the mutable dev release for pre-release testing.
 USAGE
     exit 0
     ;;

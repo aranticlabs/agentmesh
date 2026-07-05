@@ -1,0 +1,24 @@
+[[fixture]]
+name = "codex-subagent"
+surface = "codex.subagent"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "subagent"
+fixture_file_path = "native/.codex/agents/security-reviewer.toml"
+expected_canonical_id = "subagent:security-reviewer"
+expected_emitted_path = ".codex/agents/security-reviewer.toml"
+expected_diagnostics = []
+
+[[fixture]]
+name = "codex-subagent-invalid-toml"
+surface = "codex.subagent"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://developers.openai.com/codex/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "subagent"
+fixture_file_path = "invalid/.codex/agents/broken.toml"
+expected_canonical_id = "subagent:broken"
+expected_diagnostics = ["failed to parse Codex subagent TOML"]

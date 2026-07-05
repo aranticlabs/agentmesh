@@ -1,11 +1,14 @@
-.PHONY: help fmt fmt-check check clippy test build bench-check deny audit fuzz-check \
-        installer-smoke ci-rust ci-supply-chain ci-installers ci release retag clean
+.PHONY: help fmt fmt-check check clippy test build bench-check perf-budget deny audit \
+        fuzz-check fuzz-deny fuzz-audit installer-smoke ci-rust ci-supply-chain \
+        ci-installers ci release-gate release retag clean
 
 GREEN := \033[0;32m
 BLUE := \033[0;34m
 YELLOW := \033[0;33m
 RED := \033[0;31m
 NC := \033[0m
+PERF_FULL_SYNC_BUDGET_SECONDS ?= 5
+PERF_HOOK_P99_BUDGET_MS ?= 500
 
 help:
 	@echo "$(BLUE)AgentMesh targets$(NC)"
@@ -13,6 +16,7 @@ help:
 	@echo "  make ci-rust         Format, typecheck, lint, test, build, and bench-compile"
 	@echo "  make ci-supply-chain Run dependency policy and advisory checks"
 	@echo "  make ci-installers   Run installer smoke checks"
+	@echo "  make release-gate    Run release-blocking Rust, performance, and supply-chain checks"
 	@echo "  make build           Build the release binary"
 	@echo "  make release v=X.Y.Z Bump Cargo versions, tag, and push a GitHub release"
 	@echo "  make retag v=X.Y.Z   Bump Cargo versions and overwrite an existing GitHub release tag"
@@ -38,6 +42,9 @@ build:
 bench-check:
 	@cargo bench --workspace --all-features --no-run
 
+perf-budget:
+	@AGENTMESH_FULL_SYNC_BUDGET_SECONDS=$(PERF_FULL_SYNC_BUDGET_SECONDS) AGENTMESH_HOOK_P99_BUDGET_MS=$(PERF_HOOK_P99_BUDGET_MS) cargo test --release -p agentmesh-core --test performance_budgets --all-features -- --ignored
+
 deny:
 	@cargo deny check
 
@@ -47,6 +54,12 @@ audit:
 fuzz-check:
 	@cargo check --manifest-path fuzz/Cargo.toml --bins
 
+fuzz-deny:
+	@cargo deny --manifest-path fuzz/Cargo.toml check
+
+fuzz-audit:
+	@cargo audit --file fuzz/Cargo.lock
+
 installer-smoke:
 	@sh installers/install.sh --smoke
 	@sh installers/install.sh --upgrade-help
@@ -55,7 +68,7 @@ installer-smoke:
 ci-rust: fmt-check check clippy test build bench-check fuzz-check
 	@echo "$(GREEN)[SUCCESS]$(NC) Rust CI checks passed"
 
-ci-supply-chain: deny audit
+ci-supply-chain: deny audit fuzz-deny fuzz-audit
 	@echo "$(GREEN)[SUCCESS]$(NC) Supply-chain checks passed"
 
 ci-installers: installer-smoke
@@ -63,6 +76,9 @@ ci-installers: installer-smoke
 
 ci: ci-rust ci-supply-chain ci-installers
 	@echo "$(GREEN)[SUCCESS]$(NC) Full CI suite passed"
+
+release-gate: ci-rust perf-budget ci-supply-chain
+	@echo "$(GREEN)[SUCCESS]$(NC) Release gate checks passed"
 
 release:
 	@if [ -z "$(v)" ]; then \
@@ -106,6 +122,8 @@ release:
 		echo "$(RED)[ABORT]$(NC) Release cancelled."; \
 		exit 1; \
 	fi; \
+	echo "$(BLUE)[INFO]$(NC) Running release gate checks before tagging..."; \
+	$(MAKE) release-gate; \
 	echo "$(BLUE)[INFO]$(NC) Bumping Cargo workspace version to $(v)..."; \
 	scripts/bump-release-version.sh "$(v)"; \
 	echo "$(BLUE)[INFO]$(NC) Validating Cargo metadata..."; \
@@ -161,6 +179,8 @@ retag:
 		echo "$(RED)[ABORT]$(NC) Retag cancelled."; \
 		exit 1; \
 	fi; \
+	echo "$(BLUE)[INFO]$(NC) Running release gate checks before retagging..."; \
+	$(MAKE) release-gate; \
 	echo "$(BLUE)[INFO]$(NC) Bumping Cargo workspace version to $(v)..."; \
 	scripts/bump-release-version.sh "$(v)"; \
 	echo "$(BLUE)[INFO]$(NC) Validating Cargo metadata..."; \

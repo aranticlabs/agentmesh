@@ -1,0 +1,7 @@
+{
+  "AfterAgent": [
+    {
+      "command": "cursor-agent-review"
+    }
+  ]
+}

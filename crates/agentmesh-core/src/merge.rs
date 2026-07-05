@@ -142,27 +142,39 @@ pub fn preserve_losing_version(
     Ok(path)
 }
 
-fn split_markdown(input: &str) -> Result<MarkdownParts> {
-    let Some(rest) = input.strip_prefix("---\n") else {
+pub(crate) fn split_markdown(input: &str) -> Result<MarkdownParts> {
+    let Some((frontmatter, body)) = split_frontmatter(input) else {
         return Ok(MarkdownParts {
             frontmatter: Mapping::new(),
             body: input.to_string(),
         });
     };
-    let Some(end) = rest.find("\n---\n") else {
-        return Ok(MarkdownParts {
-            frontmatter: Mapping::new(),
-            body: input.to_string(),
-        });
-    };
-
-    let frontmatter = &rest[..end];
-    let body = &rest[end + "\n---\n".len()..];
 
     Ok(MarkdownParts {
         frontmatter: parse_frontmatter_mapping(frontmatter)?,
         body: body.to_string(),
     })
+}
+
+fn split_frontmatter(markdown: &str) -> Option<(&str, &str)> {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let mut offset = 0;
+
+    while offset < rest.len() {
+        let remaining = &rest[offset..];
+        let line_len = remaining
+            .find('\n')
+            .map_or(remaining.len(), |index| index + 1);
+        let line = &remaining[..line_len];
+        if matches!(line, "---\n" | "---\r\n" | "---") {
+            return Some((&rest[..offset], &rest[offset + line_len..]));
+        }
+        offset += line_len;
+    }
+
+    None
 }
 
 pub(crate) fn parse_frontmatter_mapping(frontmatter: &str) -> Result<Mapping> {
@@ -321,15 +333,14 @@ fn merge_value(
     if incoming == ancestor {
         return ValueMerge::Value(current.cloned());
     }
-    if SET_LIKE_KEYS.contains(&key) {
-        if let (
+    if SET_LIKE_KEYS.contains(&key)
+        && let (
             Some(Value::Sequence(ancestor)),
             Some(Value::Sequence(current)),
             Some(Value::Sequence(incoming)),
         ) = (ancestor, current, incoming)
-        {
-            return ValueMerge::Value(Some(merge_set_like_sequence(ancestor, current, incoming)));
-        }
+    {
+        return ValueMerge::Value(Some(merge_set_like_sequence(ancestor, current, incoming)));
     }
 
     ValueMerge::Conflict
@@ -503,6 +514,22 @@ Body
         assert!(canonical.contains("name: implementation-auditor"));
         assert!(canonical.contains("audit: enumerates scoped work"));
         assert!(canonical.ends_with("Body\n"));
+    }
+
+    #[test]
+    fn canonicalizes_crlf_frontmatter_delimiters() {
+        let canonical = match canonicalize_markdown(
+            "---\r\nname: implementation-auditor\r\ndescription: Strict audit\r\n---\r\nBody\r\n",
+        ) {
+            Ok(canonical) => canonical,
+            Err(error) => panic!("canonicalization should succeed: {error}"),
+        };
+
+        assert!(
+            canonical
+                .starts_with("---\nname: implementation-auditor\ndescription: Strict audit\n---\n")
+        );
+        assert!(canonical.ends_with("Body\r\n"));
     }
 
     #[test]

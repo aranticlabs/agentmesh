@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("stable", "nightly")]
+    [ValidateSet("stable", "dev", "nightly")]
     [string]$Channel = $(if ($env:AGENTMESH_CHANNEL) { $env:AGENTMESH_CHANNEL } else { "stable" }),
     [string]$InstallDir = $env:AGENTMESH_INSTALL_DIR,
     [switch]$PrintPlatform,
@@ -17,7 +17,15 @@ $AgentMeshVersion = if ($env:AGENTMESH_VERSION) { $env:AGENTMESH_VERSION } else 
 $BaseUrl = if ($env:AGENTMESH_BASE_URL) { $env:AGENTMESH_BASE_URL } else { "https://github.com/aranticlabs/agentmesh/releases/download" }
 $ReleaseApiUrl = if ($env:AGENTMESH_RELEASE_API_URL) { $env:AGENTMESH_RELEASE_API_URL } else { "https://api.github.com/repos/aranticlabs/agentmesh/releases/latest" }
 $CosignVersion = if ($env:AGENTMESH_COSIGN_VERSION) { $env:AGENTMESH_COSIGN_VERSION } else { "v2.6.3" }
-$CosignIdentity = if ($env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP) { $env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP } else { "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*" }
+$StableCosignIdentity = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
+$DevCosignIdentity = "^https://github.com/aranticlabs/agentmesh/.github/workflows/dev-release.yml@refs/heads/dev$"
+$CosignIdentity = if ($env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP) {
+    $env:AGENTMESH_COSIGN_CERTIFICATE_IDENTITY_REGEXP
+} elseif ($Channel -eq "dev") {
+    $DevCosignIdentity
+} else {
+    $StableCosignIdentity
+}
 $CosignIssuer = if ($env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER) { $env:AGENTMESH_COSIGN_CERTIFICATE_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }
 $script:SpinnerState = $null
 $script:SpinnerThread = $null
@@ -151,6 +159,7 @@ function Get-AgentMeshPlatform {
 function Get-ReleaseTag {
     switch ($Channel) {
         "stable" { return "v$(Get-StableVersion)" }
+        "dev" { return "dev" }
         "nightly" { return "nightly" }
     }
 }
@@ -159,6 +168,7 @@ function Get-ArtifactName {
     param([string]$Platform)
     switch ($Channel) {
         "stable" { return "agentmesh-v$(Get-StableVersion)-$Platform.tar.gz" }
+        "dev" { return "agentmesh-dev-$Platform.tar.gz" }
         "nightly" { return "agentmesh-nightly-$Platform.tar.gz" }
     }
 }
@@ -167,6 +177,7 @@ function Get-SmokeArtifactName {
     param([string]$Platform)
     switch ($Channel) {
         "stable" { return "agentmesh-stable-$Platform.tar.gz" }
+        "dev" { return "agentmesh-dev-$Platform.tar.gz" }
         "nightly" { return "agentmesh-nightly-$Platform.tar.gz" }
     }
 }
@@ -174,6 +185,7 @@ function Get-SmokeArtifactName {
 function Get-DisplayTag {
     switch ($Channel) {
         "stable" { return "latest" }
+        "dev" { return "dev" }
         "nightly" { return "nightly" }
     }
 }

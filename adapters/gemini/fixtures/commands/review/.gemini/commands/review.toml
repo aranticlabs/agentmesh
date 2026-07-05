@@ -1,0 +1,8 @@
+description = "Review the current branch with repository checks."
+prompt = """
+Review the current branch for correctness and test coverage.
+
+Arguments: {{args}}
+Shell snippet stays literal: !{git status --short}
+File reference stays literal: @{README.md}
+"""

@@ -1,0 +1,8 @@
+model = "gpt-5"
+
+[mcp_servers.filesystem]
+command = "node"
+args = ["server.js"]
+
+[mcp_servers.filesystem.env]
+PROJECT_ROOT = "."

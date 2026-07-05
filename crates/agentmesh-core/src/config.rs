@@ -116,15 +116,13 @@ impl AgentmeshConfig {
             });
         }
 
-        if let Some(sync) = &self.sync {
-            if let Some(threshold) = sync.rename_similarity_threshold {
-                if !(0.0..=1.0).contains(&threshold) {
-                    return Err(ConfigError::InvalidValue {
-                        message: "sync.rename_similarity_threshold must be between 0.0 and 1.0"
-                            .to_string(),
-                    });
-                }
-            }
+        if let Some(sync) = &self.sync
+            && let Some(threshold) = sync.rename_similarity_threshold
+            && !(0.0..=1.0).contains(&threshold)
+        {
+            return Err(ConfigError::InvalidValue {
+                message: "sync.rename_similarity_threshold must be between 0.0 and 1.0".to_string(),
+            });
         }
 
         Ok(())

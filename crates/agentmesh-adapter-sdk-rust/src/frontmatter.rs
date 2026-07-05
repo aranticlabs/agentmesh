@@ -17,25 +17,37 @@ pub struct FrontmatterDocument {
 
 /// Splits Markdown into YAML frontmatter and body content.
 pub fn parse_frontmatter(markdown: &str) -> Result<FrontmatterDocument> {
-    let Some(rest) = markdown.strip_prefix("---\n") else {
+    let Some((frontmatter, body)) = split_frontmatter(markdown) else {
         return Ok(FrontmatterDocument {
             frontmatter: Mapping::new(),
             body: markdown.to_string(),
         });
     };
-    let Some(end) = rest.find("\n---\n") else {
-        return Ok(FrontmatterDocument {
-            frontmatter: Mapping::new(),
-            body: markdown.to_string(),
-        });
-    };
-
-    let frontmatter = &rest[..end];
-    let body = &rest[end + "\n---\n".len()..];
     Ok(FrontmatterDocument {
         frontmatter: parse_frontmatter_mapping(frontmatter)?,
         body: body.to_string(),
     })
+}
+
+fn split_frontmatter(markdown: &str) -> Option<(&str, &str)> {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let mut offset = 0;
+
+    while offset < rest.len() {
+        let remaining = &rest[offset..];
+        let line_len = remaining
+            .find('\n')
+            .map_or(remaining.len(), |index| index + 1);
+        let line = &remaining[..line_len];
+        if matches!(line, "---\n" | "---\r\n" | "---") {
+            return Some((&rest[..offset], &rest[offset + line_len..]));
+        }
+        offset += line_len;
+    }
+
+    None
 }
 
 /// Serializes Markdown with stable frontmatter key ordering.

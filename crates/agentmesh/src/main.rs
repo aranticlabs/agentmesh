@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -576,6 +576,15 @@ impl agentmesh_core::AdapterRegistry for CliAdapterRegistry {
             "codex" => agentmesh_adapter_codex::CodexAdapter
                 .detect(repo_root)
                 .map_err(|error| cli_adapter_error(runtime, error)),
+            "copilot" => agentmesh_adapter_copilot::CopilotAdapter
+                .detect(repo_root)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "cursor" => agentmesh_adapter_cursor::CursorAdapter
+                .detect(repo_root)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "gemini" => agentmesh_adapter_gemini::GeminiAdapter
+                .detect(repo_root)
+                .map_err(|error| cli_adapter_error(runtime, error)),
             _ => Err(agentmesh_core::pipeline::PipelineError::Adapter {
                 runtime: runtime.clone(),
                 message: "unknown bundled adapter".to_string(),
@@ -596,6 +605,15 @@ impl agentmesh_core::AdapterRegistry for CliAdapterRegistry {
             "codex" => agentmesh_adapter_codex::CodexAdapter
                 .import(request)
                 .map_err(|error| cli_adapter_error(runtime, error)),
+            "copilot" => agentmesh_adapter_copilot::CopilotAdapter
+                .import(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "cursor" => agentmesh_adapter_cursor::CursorAdapter
+                .import(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "gemini" => agentmesh_adapter_gemini::GeminiAdapter
+                .import(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
             _ => Err(agentmesh_core::pipeline::PipelineError::Adapter {
                 runtime: runtime.clone(),
                 message: "unknown bundled adapter".to_string(),
@@ -614,6 +632,15 @@ impl agentmesh_core::AdapterRegistry for CliAdapterRegistry {
                 .emit(request)
                 .map_err(|error| cli_adapter_error(runtime, error)),
             "codex" => agentmesh_adapter_codex::CodexAdapter
+                .emit(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "copilot" => agentmesh_adapter_copilot::CopilotAdapter
+                .emit(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "cursor" => agentmesh_adapter_cursor::CursorAdapter
+                .emit(request)
+                .map_err(|error| cli_adapter_error(runtime, error)),
+            "gemini" => agentmesh_adapter_gemini::GeminiAdapter
                 .emit(request)
                 .map_err(|error| cli_adapter_error(runtime, error)),
             _ => Err(agentmesh_core::pipeline::PipelineError::Adapter {
@@ -1026,6 +1053,7 @@ fn handle_diff(context: &CliContext, command: DiffCommand) -> Result<AgentmeshEx
                 "pending_drained": summary.pending_drained,
                 "pending_conflicts": summary.pending_conflicts,
                 "capability_skipped": summary.capability_skipped,
+                "capability_skips": summary.capability_skips.iter().map(capability_skip_json).collect::<Vec<_>>(),
                 "reviewed_diff_state": review_path,
             }))
             .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))?
@@ -1042,6 +1070,7 @@ fn handle_diff(context: &CliContext, command: DiffCommand) -> Result<AgentmeshEx
             }
             if summary.capability_skipped > 0 {
                 println!("  capability skips: {}", summary.capability_skipped);
+                print_capability_skip_details(&summary.capability_skips);
             }
             if let Some(path) = &review_path {
                 println!("  review state: {}", path.display());
@@ -1199,7 +1228,7 @@ fn restore_plan(
             AgentmeshExitCode::Adapter,
         ));
     };
-    let target_path = path_from_lockfile(&context.repo_root, &ai_location, canonical_path);
+    let target_path = path_from_lockfile(&context.repo_root, &ai_location, canonical_path)?;
     let cache = cache_layout(&context.repo_root)?;
     let preserved_path = find_preserved_version(&cache, entity_id, runtime, at)?;
     let timestamp = preserved_timestamp(&preserved_path, runtime);
@@ -1265,12 +1294,139 @@ fn path_from_lockfile(
     repo_root: &Path,
     location: &agentmesh_core::LocationKey,
     lockfile_path: &Path,
-) -> PathBuf {
-    if let Ok(root_relative) = lockfile_path.strip_prefix("..") {
-        return repo_root.join(root_relative);
+) -> Result<PathBuf> {
+    if let Some(root_relative) = repo_relative_lockfile_path(location, lockfile_path)? {
+        return Ok(repo_root.join(root_relative));
     }
 
-    repo_root.join(location.as_str()).join(lockfile_path)
+    Ok(repo_root.join(location.as_str()).join(lockfile_path))
+}
+
+fn repo_relative_lockfile_path(
+    location: &agentmesh_core::LocationKey,
+    lockfile_path: &Path,
+) -> Result<Option<PathBuf>> {
+    if lockfile_path.as_os_str().is_empty() || lockfile_path.is_absolute() {
+        return Err(CliError::new(
+            format!("unsafe lockfile path: {}", lockfile_path.display()),
+            AgentmeshExitCode::Adapter,
+        ));
+    }
+
+    let mut components = lockfile_path.components();
+    let Some(first) = components.next() else {
+        return Err(CliError::new(
+            format!("unsafe lockfile path: {}", lockfile_path.display()),
+            AgentmeshExitCode::Adapter,
+        ));
+    };
+
+    if first == Component::ParentDir {
+        let mut root_relative = PathBuf::new();
+        for component in components {
+            let Component::Normal(part) = component else {
+                return Err(CliError::new(
+                    format!(
+                        "unsafe repo-relative lockfile path: {}",
+                        lockfile_path.display()
+                    ),
+                    AgentmeshExitCode::Adapter,
+                ));
+            };
+            root_relative.push(part);
+        }
+        if root_relative.as_os_str().is_empty() {
+            return Err(CliError::new(
+                format!(
+                    "unsafe repo-relative lockfile path: {}",
+                    lockfile_path.display()
+                ),
+                AgentmeshExitCode::Adapter,
+            ));
+        }
+        if !repo_relative_path_allowed(location, &root_relative) {
+            return Err(CliError::new(
+                format!(
+                    "repo-relative lockfile path is not allowed for `{}`: {}",
+                    location.as_str(),
+                    lockfile_path.display()
+                ),
+                AgentmeshExitCode::Adapter,
+            ));
+        }
+        return Ok(Some(root_relative));
+    }
+
+    if !matches!(first, Component::Normal(_)) {
+        return Err(CliError::new(
+            format!("unsafe lockfile path: {}", lockfile_path.display()),
+            AgentmeshExitCode::Adapter,
+        ));
+    }
+    for component in components {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(CliError::new(
+                format!("unsafe lockfile path: {}", lockfile_path.display()),
+                AgentmeshExitCode::Adapter,
+            ));
+        }
+    }
+    Ok(None)
+}
+
+fn repo_relative_path_allowed(
+    location: &agentmesh_core::LocationKey,
+    root_relative: &Path,
+) -> bool {
+    match location.as_str() {
+        ".ai" => root_relative == Path::new("AGENTS.md"),
+        ".claude" => {
+            root_relative == Path::new("CLAUDE.md") || root_relative == Path::new(".mcp.json")
+        }
+        ".codex" => codex_repo_relative_instruction_path(root_relative),
+        ".gemini" => gemini_repo_relative_context_path(root_relative),
+        ".copilot" => {
+            root_relative == Path::new(".github/copilot-instructions.md")
+                || root_relative.starts_with(".github/instructions")
+                || root_relative.starts_with(".github/prompts")
+                || root_relative.starts_with(".github/skills")
+                || root_relative.starts_with(".github/agents")
+        }
+        _ => false,
+    }
+}
+
+fn gemini_repo_relative_context_path(root_relative: &Path) -> bool {
+    if root_relative == Path::new("GEMINI.md") {
+        return true;
+    }
+    if root_relative.file_name().and_then(|name| name.to_str()) != Some("GEMINI.md") {
+        return false;
+    }
+    safe_nested_repo_root(root_relative)
+}
+
+fn codex_repo_relative_instruction_path(root_relative: &Path) -> bool {
+    if root_relative == Path::new("AGENTS.md") {
+        return true;
+    }
+    if root_relative.file_name().and_then(|name| name.to_str()) != Some("AGENTS.md") {
+        return false;
+    }
+    safe_nested_repo_root(root_relative)
+}
+
+fn safe_nested_repo_root(root_relative: &Path) -> bool {
+    let Some(parent) = root_relative.parent() else {
+        return false;
+    };
+    parent.components().all(|component| {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        part.to_str()
+            .is_some_and(|part| !part.starts_with('.') && part != "target")
+    })
 }
 
 fn print_restore_dry_run(context: &CliContext, plan: &RestorePlan) {
@@ -1612,6 +1768,15 @@ fn handle_adapter(command: AdapterCommand) -> Result<AgentmeshExitCode> {
             agentmesh_adapter_sdk_rust::run_adapter(agentmesh_adapter_claude::ClaudeAdapter)
         }
         "codex" => agentmesh_adapter_sdk_rust::run_adapter(agentmesh_adapter_codex::CodexAdapter),
+        "copilot" => {
+            agentmesh_adapter_sdk_rust::run_adapter(agentmesh_adapter_copilot::CopilotAdapter)
+        }
+        "cursor" => {
+            agentmesh_adapter_sdk_rust::run_adapter(agentmesh_adapter_cursor::CursorAdapter)
+        }
+        "gemini" => {
+            agentmesh_adapter_sdk_rust::run_adapter(agentmesh_adapter_gemini::GeminiAdapter)
+        }
         other => {
             return Err(CliError::new(
                 format!("unknown bundled adapter: {other}"),
@@ -1629,7 +1794,7 @@ fn handle_reserved_v02(
 ) -> Result<AgentmeshExitCode> {
     let _ = command.args.len();
     eprintln!(
-        "{} This command is available in AgentMesh v0.2+.",
+        "{} This command is reserved for a future AgentMesh release.",
         context.paint(OutputStyle::Warning, "⚠")
     );
     Ok(AgentmeshExitCode::Usage)
@@ -1865,10 +2030,60 @@ fn print_sync_check_details(context: &CliContext, summary: &agentmesh_core::Sync
     println!("  entities_changed={}", summary.entities_changed);
     println!("  pending_conflicts={}", summary.pending_conflicts);
     println!("  capability_skipped={}", summary.capability_skipped);
+    print_capability_skip_details(&summary.capability_skips);
     if summary.pending_conflicts > 0 {
         println!("  resolution=manual conflict acknowledgement required");
     } else {
         println!("  resolution=auto-resolvable by `agentmesh sync`");
+    }
+}
+
+fn print_capability_skip_details(findings: &[agentmesh_core::CapabilitySkipFinding]) {
+    for finding in findings {
+        println!(
+            "  capability_skip runtime={} entity={} type={} fallback={}",
+            finding.runtime.as_str(),
+            finding.entity_id.as_str(),
+            finding.entity_type.as_str(),
+            capability_fallback_name(finding.fallback)
+        );
+        if !finding.locations.is_empty() {
+            let locations = finding
+                .locations
+                .iter()
+                .map(|(location, path)| format!("{}:{}", location.as_str(), path.display()))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("    locations={locations}");
+        }
+    }
+}
+
+fn capability_skip_json(finding: &agentmesh_core::CapabilitySkipFinding) -> serde_json::Value {
+    json!({
+        "runtime": finding.runtime.as_str(),
+        "entity_id": finding.entity_id.as_str(),
+        "entity_type": finding.entity_type.as_str(),
+        "fallback": capability_fallback_name(finding.fallback),
+        "locations": finding
+            .locations
+            .iter()
+            .map(|(location, path)| {
+                json!({
+                    "location": location.as_str(),
+                    "path": path,
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn capability_fallback_name(fallback: agentmesh_core::config::CapabilityFallback) -> &'static str {
+    match fallback {
+        agentmesh_core::config::CapabilityFallback::Skip => "skip",
+        agentmesh_core::config::CapabilityFallback::Warn => "warn",
+        agentmesh_core::config::CapabilityFallback::RenderAsDoc => "render-as-doc",
+        agentmesh_core::config::CapabilityFallback::Fail => "fail",
     }
 }
 
@@ -1912,7 +2127,8 @@ fn map_core_error(error: agentmesh_core::CoreError) -> CliError {
             | agentmesh_core::pipeline::PipelineError::PreservedVersionNotFound { .. }
             | agentmesh_core::pipeline::PipelineError::Adapter { .. }
             | agentmesh_core::pipeline::PipelineError::Protocol(_)
-            | agentmesh_core::pipeline::PipelineError::CapabilityMismatch { .. } => {
+            | agentmesh_core::pipeline::PipelineError::CapabilityMismatch { .. }
+            | agentmesh_core::pipeline::PipelineError::RenderAsDocUnsupported { .. } => {
                 AgentmeshExitCode::Adapter
             }
         },
@@ -2123,12 +2339,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_runtime_scan_reports_cursor_rules() {
+    fn unknown_runtime_scan_reports_unbundled_rules() {
         let temp = match tempfile::tempdir() {
             Ok(temp) => temp,
             Err(error) => panic!("tempdir should be available: {error}"),
         };
-        let rules_dir = temp.path().join(".cursor/rules");
+        let rules_dir = temp.path().join(".windsurf/rules");
         if let Err(error) = fs::create_dir_all(&rules_dir) {
             panic!("rules directory should be created: {error}");
         }
@@ -2141,7 +2357,7 @@ mod tests {
             Err(error) => panic!("unknown runtime scan should succeed: {error}"),
         };
 
-        assert_eq!(unknown, vec![PathBuf::from(".cursor")]);
+        assert_eq!(unknown, vec![PathBuf::from(".windsurf")]);
     }
 
     #[test]
@@ -2187,6 +2403,7 @@ mod tests {
                 entities: vec!["instructions:root".to_string()],
                 import_error: None,
                 hook_overlay: PathBuf::from(".claude/settings.local.json"),
+                hook_supported: true,
                 hook_installed: false,
                 hook_note: None,
             }],

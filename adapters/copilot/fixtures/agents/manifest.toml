@@ -1,0 +1,38 @@
+[[fixture]]
+name = "custom-agent-profile"
+surface = "copilot.custom-agent"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-custom-agents"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "subagent"
+fixture_file_path = "agent-profile/.github/agents/security-reviewer.agent.md"
+expected_canonical_id = "subagent:security-reviewer"
+expected_emitted_path = ".github/agents/security-reviewer.agent.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "custom-agent-legacy-extension"
+surface = "copilot.custom-agent"
+cases = ["round_trip", "doctor"]
+source_url = "https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-custom-agents"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "subagent"
+fixture_file_path = "legacy-profile/.github/agents/performance-reviewer.md"
+expected_canonical_id = "subagent:performance-reviewer"
+expected_emitted_path = ".github/agents/performance-reviewer.agent.md"
+expected_diagnostics = []
+expected_behaviors = ["new emits normalize to .agent.md"]
+
+[[fixture]]
+name = "custom-agent-invalid-frontmatter"
+surface = "copilot.custom-agent"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-custom-agents"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "subagent"
+fixture_file_path = "invalid-profile/.github/agents/broken.agent.md"
+expected_canonical_id = "subagent:broken"
+expected_diagnostics = ["invalid custom-agent frontmatter must not be overwritten"]

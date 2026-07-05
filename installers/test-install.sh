@@ -6,7 +6,7 @@ tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/agentmesh-installer-test.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
 functions_file="$tmpdir/install-functions.sh"
-awk '/^channel="stable"/ { exit } { print }' "$script_dir/install.sh" > "$functions_file"
+awk '/^channel=/ { exit } { print }' "$script_dir/install.sh" > "$functions_file"
 
 write_fake_uname() {
   directory="$1"

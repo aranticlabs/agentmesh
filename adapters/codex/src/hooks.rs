@@ -18,13 +18,18 @@ pub(crate) fn install_hooks(
         request.agentmesh_binary_path.display()
     );
     let mut value = read_json_object(&overlay)?;
-    let post_tool_use = ensure_hook_array(&mut value, &["PostToolUse"])?;
+    let legacy_removed =
+        remove_hook_entries_at(&mut value, &["PostToolUse"], &[], "$.PostToolUse", true);
+    let post_tool_use = ensure_hook_array(&mut value, &["hooks", "PostToolUse"])?;
 
     if let Some(index) = find_hook_group(post_tool_use, &command) {
+        if legacy_removed > 0 {
+            write_json_pretty(&overlay, &value)?;
+        }
         return Ok(InstallHooksResponse {
             hooks_installed: vec![InstalledHook {
                 overlay_file: workspace_relative(&workspace_root, &overlay)?,
-                entry_path: format!("$.PostToolUse[{index}]"),
+                entry_path: format!("$.hooks.PostToolUse[{index}]"),
                 command,
                 matcher,
             }],
@@ -33,6 +38,7 @@ pub(crate) fn install_hooks(
         });
     }
 
+    remove_matching_entries(post_tool_use, "codex-hook");
     post_tool_use.push(json!({
         "matcher": matcher,
         "hooks": [{
@@ -48,7 +54,7 @@ pub(crate) fn install_hooks(
     Ok(InstallHooksResponse {
         hooks_installed: vec![InstalledHook {
             overlay_file: workspace_relative(&workspace_root, &overlay)?,
-            entry_path: format!("$.PostToolUse[{index}]"),
+            entry_path: format!("$.hooks.PostToolUse[{index}]"),
             command,
             matcher,
         }],
@@ -70,26 +76,31 @@ pub(crate) fn remove_hooks(
     }
 
     let mut value = read_json_object(&overlay)?;
-    let removed = {
-        let Some(post_tool_use) = find_hook_array_mut(&mut value, &["PostToolUse"]) else {
-            return Ok(RemoveHooksResponse {
-                ok: false,
-                removed_count: 0,
-                error: Some("Codex PostToolUse hook array not found".to_string()),
-            });
-        };
+    let mut removed = remove_hook_entries_at(
+        &mut value,
+        &["hooks", "PostToolUse"],
+        &request.entry_paths,
+        "$.hooks.PostToolUse",
+        false,
+    );
+    removed += remove_hook_entries_at(
+        &mut value,
+        &["PostToolUse"],
+        &request.entry_paths,
+        "$.PostToolUse",
+        false,
+    );
 
-        let mut removed = remove_recorded_entries(
-            post_tool_use,
-            &request.entry_paths,
-            "$.PostToolUse",
-            "codex-hook",
+    if removed == 0 {
+        removed += remove_hook_entries_at(
+            &mut value,
+            &["hooks", "PostToolUse"],
+            &[],
+            "$.hooks.PostToolUse",
+            true,
         );
-        if removed == 0 {
-            removed = remove_matching_entries(post_tool_use, "codex-hook");
-        }
-        removed
-    };
+        removed += remove_hook_entries_at(&mut value, &["PostToolUse"], &[], "$.PostToolUse", true);
+    }
 
     if removed == 0 {
         return Ok(RemoveHooksResponse {
@@ -116,6 +127,23 @@ pub(crate) fn remove_hooks(
     })
 }
 
+fn remove_hook_entries_at(
+    value: &mut JsonValue,
+    path: &[&str],
+    entry_paths: &[String],
+    prefix: &str,
+    remove_all_matching: bool,
+) -> u32 {
+    let Some(entries) = find_hook_array_mut(value, path) else {
+        return 0;
+    };
+    if remove_all_matching {
+        remove_matching_entries(entries, "codex-hook")
+    } else {
+        remove_recorded_entries(entries, entry_paths, prefix, "codex-hook")
+    }
+}
+
 fn codex_matcher(extra: Option<&str>) -> String {
     let mut tools = vec!["Edit", "Write", "MultiEdit"];
     if let Some(extra) = extra.map(str::trim).filter(|extra| !extra.is_empty()) {
@@ -128,7 +156,18 @@ fn codex_hooks_are_empty(value: &JsonValue) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    object
+    object.iter().all(|(key, value)| match key.as_str() {
+        "hooks" => codex_hook_object_is_empty(value),
+        "PostToolUse" => value.as_array().is_some_and(Vec::is_empty),
+        _ => false,
+    })
+}
+
+fn codex_hook_object_is_empty(value: &JsonValue) -> bool {
+    let Some(hooks) = value.as_object() else {
+        return false;
+    };
+    hooks
         .iter()
         .all(|(key, value)| key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty))
 }

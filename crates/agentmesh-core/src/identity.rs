@@ -64,20 +64,277 @@ pub struct DetectedRename {
 
 /// Derives the deterministic entity ID for a first-seen path.
 pub fn derive_entity_id(path: &Path) -> Result<EntityId> {
+    derive_entity_id_for_type(None, path)
+}
+
+/// Derives the deterministic entity ID for a first-seen path and entity type.
+pub fn derive_entity_id_as(entity_type: EntityType, path: &Path) -> Result<EntityId> {
+    derive_entity_id_for_type(Some(entity_type), path)
+}
+
+fn derive_entity_id_for_type(entity_type: Option<EntityType>, path: &Path) -> Result<EntityId> {
     let parts = utf8_components(path)?;
 
     match parts.as_slice() {
-        ["AGENTS.md"] | ["CLAUDE.md"] => EntityId::new("instructions:root").map_err(Into::into),
-        [".ai", "skills", skill_name, ..] | [".claude" | ".codex", "skills", skill_name, ..] => {
+        ["AGENTS.md"] | ["CLAUDE.md"] | ["GEMINI.md"] | [".github", "copilot-instructions.md"]
+            if entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            EntityId::new("instructions:root").map_err(Into::into)
+        }
+        [scope @ .., "AGENTS.md" | "GEMINI.md"]
+            if !scope.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            let slug = slugify_segments(scope)?;
+            EntityId::new(format!("instructions:scoped:{slug}")).map_err(Into::into)
+        }
+        [".github", "instructions", instruction_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            let slug = slugify(strip_suffix(instruction_file, ".instructions.md"))?;
+            EntityId::new(format!("instructions:scoped:{slug}")).map_err(Into::into)
+        }
+        [".github", "instructions", nested @ .., instruction_file]
+            if !nested.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            let slug =
+                slugify_path_with_stem(nested, strip_suffix(instruction_file, ".instructions.md"))?;
+            EntityId::new(format!("instructions:scoped:{slug}")).map_err(Into::into)
+        }
+        [".ai", "instructions", instruction_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            let slug = slugify(file_stem(instruction_file))?;
+            EntityId::new(format!("instructions:scoped:{slug}")).map_err(Into::into)
+        }
+        [".ai", "instructions", nested @ .., instruction_file]
+            if !nested.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::Instructions) =>
+        {
+            let slug = slugify_path_with_stem(nested, file_stem(instruction_file))?;
+            EntityId::new(format!("instructions:scoped:{slug}")).map_err(Into::into)
+        }
+        [
+            ".ai" | ".agents" | ".github" | ".gemini",
+            "skills",
+            skill_name,
+            ..,
+        ]
+        | [".claude" | ".codex", "skills", skill_name, ..]
+            if entity_type.is_none_or(|kind| kind == EntityType::Skill) =>
+        {
             EntityId::from_parts(EntityType::Skill, &slugify(skill_name)?).map_err(Into::into)
         }
-        [".ai", "subagents", file_name] => {
+        [".ai", "subagents", file_name]
+            if entity_type.is_none_or(|kind| kind == EntityType::Subagent) =>
+        {
             EntityId::from_parts(EntityType::Subagent, &slugify(file_stem(file_name))?)
                 .map_err(Into::into)
         }
-        [".claude" | ".codex", "agents", file_name] => {
+        [".claude" | ".codex", "agents", file_name]
+            if entity_type.is_none_or(|kind| kind == EntityType::Subagent) =>
+        {
             EntityId::from_parts(EntityType::Subagent, &slugify(file_stem(file_name))?)
                 .map_err(Into::into)
+        }
+        [".github", "agents", file_name]
+            if entity_type.is_none_or(|kind| kind == EntityType::Subagent) =>
+        {
+            let stem = file_name
+                .strip_suffix(".agent.md")
+                .or_else(|| file_name.strip_suffix(".md"))
+                .unwrap_or(file_name);
+            EntityId::from_parts(EntityType::Subagent, &slugify(stem)?).map_err(Into::into)
+        }
+        [".cursor", "rules", rule_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Rule) =>
+        {
+            EntityId::from_parts(EntityType::Rule, &slugify(file_stem(rule_file))?)
+                .map_err(Into::into)
+        }
+        [".ai", "rules", rule_file] if entity_type.is_none_or(|kind| kind == EntityType::Rule) => {
+            EntityId::from_parts(EntityType::Rule, &slugify(file_stem(rule_file))?)
+                .map_err(Into::into)
+        }
+        [".ai", "rules", nested @ .., rule_file]
+            if !nested.is_empty() && entity_type.is_none_or(|kind| kind == EntityType::Rule) =>
+        {
+            EntityId::from_parts(
+                EntityType::Rule,
+                &slugify_path_with_stem(nested, file_stem(rule_file))?,
+            )
+            .map_err(Into::into)
+        }
+        [".cursor", "rules", nested @ .., rule_file]
+            if !nested.is_empty() && entity_type.is_none_or(|kind| kind == EntityType::Rule) =>
+        {
+            EntityId::from_parts(
+                EntityType::Rule,
+                &slugify_path_with_stem(nested, file_stem(rule_file))?,
+            )
+            .map_err(Into::into)
+        }
+        [".claude", "rules", rule_file]
+            if entity_type.is_some_and(|kind| kind == EntityType::Instructions) =>
+        {
+            EntityId::from_parts(EntityType::Instructions, &slugify(file_stem(rule_file))?)
+                .map_err(Into::into)
+        }
+        [".claude", "rules", nested @ .., rule_file]
+            if !nested.is_empty()
+                && entity_type.is_some_and(|kind| kind == EntityType::Instructions) =>
+        {
+            EntityId::from_parts(
+                EntityType::Instructions,
+                &slugify_path_with_stem(nested, file_stem(rule_file))?,
+            )
+            .map_err(Into::into)
+        }
+        [".claude", "rules", rule_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Rule) =>
+        {
+            EntityId::from_parts(EntityType::Rule, &slugify(file_stem(rule_file))?)
+                .map_err(Into::into)
+        }
+        [".claude", "rules", nested @ .., rule_file]
+            if !nested.is_empty() && entity_type.is_none_or(|kind| kind == EntityType::Rule) =>
+        {
+            EntityId::from_parts(
+                EntityType::Rule,
+                &slugify_path_with_stem(nested, file_stem(rule_file))?,
+            )
+            .map_err(Into::into)
+        }
+        [".github", "prompts", prompt_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Prompt) =>
+        {
+            EntityId::from_parts(
+                EntityType::Prompt,
+                &slugify(strip_suffix(prompt_file, ".prompt.md"))?,
+            )
+            .map_err(Into::into)
+        }
+        [".ai", "prompts", prompt_file]
+            if entity_type.is_none_or(|kind| kind == EntityType::Prompt) =>
+        {
+            EntityId::from_parts(EntityType::Prompt, &slugify(file_stem(prompt_file))?)
+                .map_err(Into::into)
+        }
+        [".ai", "prompts", nested @ .., prompt_file]
+            if !nested.is_empty() && entity_type.is_none_or(|kind| kind == EntityType::Prompt) =>
+        {
+            EntityId::from_parts(
+                EntityType::Prompt,
+                &slugify_path_with_stem(nested, file_stem(prompt_file))?,
+            )
+            .map_err(Into::into)
+        }
+        [".ai", "commands", command @ ..]
+            if !command.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::Command) =>
+        {
+            EntityId::from_parts(EntityType::Command, &command_slug(command)?).map_err(Into::into)
+        }
+        [".claude" | ".gemini", "commands", command @ ..]
+            if !command.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::Command) =>
+        {
+            EntityId::from_parts(EntityType::Command, &command_slug(command)?).map_err(Into::into)
+        }
+        [".ai", "hooks", file_name] if entity_type.is_none_or(|kind| kind == EntityType::Hook) => {
+            EntityId::from_parts(EntityType::Hook, &slugify(file_stem(file_name))?)
+                .map_err(Into::into)
+        }
+        [".ai", "hooks", nested @ .., file_name]
+            if !nested.is_empty() && entity_type.is_none_or(|kind| kind == EntityType::Hook) =>
+        {
+            EntityId::from_parts(
+                EntityType::Hook,
+                &slugify_path_with_stem(nested, file_stem(file_name))?,
+            )
+            .map_err(Into::into)
+        }
+        [".ai", "mcp-bindings", file_name]
+            if entity_type.is_none_or(|kind| kind == EntityType::McpBinding) =>
+        {
+            EntityId::from_parts(EntityType::McpBinding, &slugify(file_stem(file_name))?)
+                .map_err(Into::into)
+        }
+        [".ai", "mcp-bindings", nested @ .., file_name]
+            if !nested.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::McpBinding) =>
+        {
+            EntityId::from_parts(
+                EntityType::McpBinding,
+                &slugify_path_with_stem(nested, file_stem(file_name))?,
+            )
+            .map_err(Into::into)
+        }
+        [".ai", "permission-policies", file_name]
+            if entity_type.is_none_or(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(
+                EntityType::PermissionPolicy,
+                &slugify(file_stem(file_name))?,
+            )
+            .map_err(Into::into)
+        }
+        [".ai", "permission-policies", nested @ .., file_name]
+            if !nested.is_empty()
+                && entity_type.is_none_or(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(
+                EntityType::PermissionPolicy,
+                &slugify_path_with_stem(nested, file_stem(file_name))?,
+            )
+            .map_err(Into::into)
+        }
+        [".claude", "settings.json"] if entity_type.is_none_or(|kind| kind == EntityType::Hook) => {
+            EntityId::from_parts(EntityType::Hook, "claude-project").map_err(Into::into)
+        }
+        [".gemini", "settings.json"] if entity_type.is_none_or(|kind| kind == EntityType::Hook) => {
+            EntityId::from_parts(EntityType::Hook, "gemini-project").map_err(Into::into)
+        }
+        [".codex", "hooks.json"] if entity_type.is_none_or(|kind| kind == EntityType::Hook) => {
+            EntityId::from_parts(EntityType::Hook, "codex-project").map_err(Into::into)
+        }
+        [".mcp.json"] if entity_type.is_none_or(|kind| kind == EntityType::McpBinding) => {
+            EntityId::from_parts(EntityType::McpBinding, "project").map_err(Into::into)
+        }
+        [".gemini", "settings.json"]
+            if entity_type.is_some_and(|kind| kind == EntityType::McpBinding) =>
+        {
+            EntityId::from_parts(EntityType::McpBinding, "gemini-project").map_err(Into::into)
+        }
+        [".codex", "config.toml"]
+            if entity_type.is_some_and(|kind| kind == EntityType::McpBinding) =>
+        {
+            EntityId::from_parts(EntityType::McpBinding, "codex-project").map_err(Into::into)
+        }
+        [".claude", "settings.json"]
+            if entity_type.is_some_and(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(EntityType::PermissionPolicy, "claude-project").map_err(Into::into)
+        }
+        [".gemini", "settings.json"]
+            if entity_type.is_some_and(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(EntityType::PermissionPolicy, "gemini-project").map_err(Into::into)
+        }
+        [".codex", "config.toml"]
+            if entity_type.is_some_and(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(EntityType::PermissionPolicy, "codex-project").map_err(Into::into)
+        }
+        [".codex", "rules", file_name]
+            if entity_type.is_some_and(|kind| kind == EntityType::PermissionPolicy) =>
+        {
+            EntityId::from_parts(
+                EntityType::PermissionPolicy,
+                &slugify(file_stem(file_name))?,
+            )
+            .map_err(Into::into)
         }
         _ => Err(IdentityError::UnsupportedPath {
             path: path.to_path_buf(),
@@ -191,6 +448,34 @@ fn file_stem(file_name: &str) -> &str {
         .unwrap_or(file_name)
 }
 
+fn strip_suffix<'a>(value: &'a str, suffix: &str) -> &'a str {
+    value.strip_suffix(suffix).unwrap_or(value)
+}
+
+fn slugify_segments(segments: &[&str]) -> Result<String> {
+    slugify(&segments.join("-"))
+}
+
+fn slugify_path_with_stem(segments: &[&str], stem: &str) -> Result<String> {
+    let mut parts = segments.to_vec();
+    parts.push(stem);
+    slugify_segments(&parts)
+}
+
+fn command_slug(command: &[&str]) -> Result<String> {
+    let Some((file_name, namespace)) = command.split_last() else {
+        return Err(IdentityError::InvalidSlug {
+            value: String::new(),
+        });
+    };
+    let command_name = slugify(file_stem(file_name))?;
+    if namespace.is_empty() {
+        return Ok(command_name);
+    }
+    let namespace = slugify_segments(namespace)?;
+    Ok(format!("{namespace}:{command_name}"))
+}
+
 fn slugify(value: &str) -> Result<String> {
     let mut slug = String::new();
     let mut previous_dash = false;
@@ -221,8 +506,10 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        RenameCandidate, derive_entity_id, detect_rename, parse_pin_marker, resolve_collision,
+        RenameCandidate, derive_entity_id, derive_entity_id_as, detect_rename, parse_pin_marker,
+        resolve_collision,
     };
+    use crate::EntityType;
     use crate::types::{EntityId, Hash};
 
     fn hash(value: &str) -> Hash {
@@ -244,6 +531,13 @@ mod tests {
         let cases = [
             ("AGENTS.md", "instructions:root"),
             ("CLAUDE.md", "instructions:root"),
+            ("GEMINI.md", "instructions:root"),
+            ("packages/api/AGENTS.md", "instructions:scoped:packages-api"),
+            ("packages/api/GEMINI.md", "instructions:scoped:packages-api"),
+            (
+                ".github/instructions/api-review.instructions.md",
+                "instructions:scoped:api-review",
+            ),
             (
                 ".claude/skills/Security Review/SKILL.md",
                 "skill:security-review",
@@ -253,15 +547,88 @@ mod tests {
                 "skill:security-review",
             ),
             (".ai/skills/api-design/SKILL.md", "skill:api-design"),
+            (
+                ".agents/skills/shared-analysis/SKILL.md",
+                "skill:shared-analysis",
+            ),
             (".claude/agents/code-reviewer.md", "subagent:code-reviewer"),
             (".codex/agents/code-reviewer.toml", "subagent:code-reviewer"),
+            (
+                ".github/agents/code-reviewer.agent.md",
+                "subagent:code-reviewer",
+            ),
+            (
+                ".github/agents/performance-reviewer.md",
+                "subagent:performance-reviewer",
+            ),
             (".ai/subagents/code-reviewer.md", "subagent:code-reviewer"),
+            (".cursor/rules/security.mdc", "rule:security"),
+            (".claude/rules/security.md", "rule:security"),
+            (
+                ".github/prompts/release-notes.prompt.md",
+                "prompt:release-notes",
+            ),
+            (".claude/commands/git/commit.md", "command:git:commit"),
+            (".gemini/commands/review.toml", "command:review"),
+            (".claude/settings.json", "hook:claude-project"),
+            (".gemini/settings.json", "hook:gemini-project"),
+            (".codex/hooks.json", "hook:codex-project"),
+            (".mcp.json", "mcp-binding:project"),
         ];
 
         for (path, expected) in cases {
             let actual = match derive_entity_id(Path::new(path)) {
                 Ok(actual) => actual,
                 Err(error) => panic!("path should derive an id: {error}"),
+            };
+            assert_eq!(actual.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn derives_typed_ids_for_multi_entity_config_paths() {
+        let cases = [
+            (
+                EntityType::Instructions,
+                ".claude/rules/api.md",
+                "instructions:scoped:api",
+            ),
+            (
+                EntityType::McpBinding,
+                ".gemini/settings.json",
+                "mcp-binding:gemini-project",
+            ),
+            (
+                EntityType::McpBinding,
+                ".codex/config.toml",
+                "mcp-binding:codex-project",
+            ),
+            (
+                EntityType::PermissionPolicy,
+                ".claude/settings.json",
+                "permission-policy:claude-project",
+            ),
+            (
+                EntityType::PermissionPolicy,
+                ".gemini/settings.json",
+                "permission-policy:gemini-project",
+            ),
+            (
+                EntityType::PermissionPolicy,
+                ".codex/config.toml",
+                "permission-policy:codex-project",
+            ),
+            (
+                EntityType::PermissionPolicy,
+                ".codex/rules/strict.rules",
+                "permission-policy:strict",
+            ),
+        ];
+
+        for (entity_type, path, expected) in cases {
+            let actual = match derive_entity_id_as(entity_type, Path::new(path)) {
+                Ok(actual) => actual,
+                Err(error) => panic!("path should derive a typed id: {error}"),
             };
             assert_eq!(actual.as_str(), expected);
         }
@@ -279,6 +646,20 @@ mod tests {
         };
 
         assert_eq!(resolved.as_str(), "skill:security-review-3");
+    }
+
+    #[test]
+    fn resolves_namespaced_command_collisions_on_command_segment() {
+        let existing = BTreeSet::from([
+            entity_id("command:git:commit"),
+            entity_id("command:git:commit-2"),
+        ]);
+        let resolved = match resolve_collision(&entity_id("command:git:commit"), &existing) {
+            Ok(resolved) => resolved,
+            Err(error) => panic!("collision should resolve: {error}"),
+        };
+
+        assert_eq!(resolved.as_str(), "command:git:commit-3");
     }
 
     #[test]

@@ -26,6 +26,9 @@ ulid = "1.2.1"
 [dev-dependencies]
 agentmesh-adapter-claude.workspace = true
 agentmesh-adapter-codex.workspace = true
+agentmesh-adapter-copilot.workspace = true
+agentmesh-adapter-cursor.workspace = true
+agentmesh-adapter-gemini.workspace = true
 agentmesh-adapter-sdk-rust.workspace = true
 criterion.workspace = true
 insta.workspace = true

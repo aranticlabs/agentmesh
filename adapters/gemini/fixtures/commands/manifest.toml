@@ -1,0 +1,37 @@
+[[fixture]]
+name = "project-command"
+surface = "gemini.project-command"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "review/.gemini/commands/review.toml"
+expected_canonical_id = "command:review"
+expected_emitted_path = ".gemini/commands/review.toml"
+expected_diagnostics = []
+
+[[fixture]]
+name = "namespaced-project-command"
+surface = "gemini.project-command"
+cases = ["minimum_valid", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "namespaced/.gemini/commands/git/commit.toml"
+expected_canonical_id = "command:git:commit"
+expected_emitted_path = ".gemini/commands/git/commit.toml"
+expected_diagnostics = []
+
+[[fixture]]
+name = "invalid-command"
+surface = "gemini.project-command"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "invalid/.gemini/commands/missing-prompt.toml"
+expected_canonical_id = "command:missing-prompt"
+expected_diagnostics = ["missing required prompt field"]
