@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - main
+      - dev
     paths:
       - installers/install.sh
       - installers/install.ps1
+      - installers/install-dev.sh
+      - installers/install-dev.ps1
   workflow_dispatch:
 
 jobs:
@@ -25,21 +28,26 @@ jobs:
           SOURCE_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-          gh api "repos/aranticlabs/agentmesh/contents/installers/install.sh?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.sh
-          gh api "repos/aranticlabs/agentmesh/contents/installers/install.ps1?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.ps1
-          chmod +x static/install.sh
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            gh api "repos/aranticlabs/agentmesh/contents/installers/install.sh?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.sh
+            gh api "repos/aranticlabs/agentmesh/contents/installers/install.ps1?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install.ps1
+            chmod +x static/install.sh
+          fi
+          gh api "repos/aranticlabs/agentmesh/contents/installers/install-dev.sh?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install-dev.sh
+          gh api "repos/aranticlabs/agentmesh/contents/installers/install-dev.ps1?ref=${SOURCE_REF}" --jq '.content' | base64 -d > static/install-dev.ps1
+          chmod +x static/install-dev.sh
 
       - name: Commit and push
         env:
           GH_TOKEN: ${{ secrets.AGENTMESH_DOCS_SYNC_TOKEN }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- static/install.sh static/install.ps1; then
+          if git diff --quiet -- static/install.sh static/install.ps1 static/install-dev.sh static/install-dev.ps1; then
             echo "No changes to sync."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add static/install.sh static/install.ps1
+          git add static/install.sh static/install.ps1 static/install-dev.sh static/install-dev.ps1
           git commit -m "chore: sync install scripts from aranticlabs/agentmesh@${GITHUB_SHA:0:7}"
           git push

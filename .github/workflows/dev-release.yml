@@ -1,0 +1,134 @@
+name: dev release
+
+on:
+  push:
+    branches:
+      - dev
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: make release-gate PERF_FULL_SYNC_BUDGET_SECONDS=5 PERF_HOOK_P99_BUDGET_MS=100
+      - run: make ci-installers
+      - run: sh installers/install-dev.sh --smoke
+
+  build-artifacts:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }} -p agentmesh
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="agentmesh-dev-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          binary="target/${{ matrix.target }}/release/agentmesh"
+          suffix=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            binary="${binary}.exe"
+            suffix=".exe"
+          fi
+          cp "$binary" "dist/${name}/agentmesh${suffix}"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmesh-dev-${{ matrix.target }}
+          path: dist/agentmesh-dev-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs:
+      - gate
+      - build-artifacts
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksum manifest
+        run: |
+          cd dist
+          sha256sum agentmesh-dev-* > SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign checksum manifest
+        run: cosign sign-blob --yes --output-signature dist/SHA256SUMS.sig --bundle dist/SHA256SUMS.bundle dist/SHA256SUMS
+      - name: Publish dev release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat >release-notes.md <<EOF
+          AgentMesh dev build from ${GITHUB_SHA}.
+
+          This release is mutable and is intended for testing the dev installer only.
+          EOF
+          gh release delete dev --yes --cleanup-tag >/dev/null 2>&1 || true
+          git tag -f dev "$GITHUB_SHA"
+          git push --force origin refs/tags/dev
+          gh release create dev dist/* \
+            --title "AgentMesh dev" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --target "$GITHUB_SHA"

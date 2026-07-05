@@ -55,6 +55,14 @@ jobs:
           }
           $env:AGENTMESH_LATEST_VERSION = "v$($versionLine.Matches[0].Groups[1].Value)"
           powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -PrintUrl
+          $devUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel dev -PrintUrl
+          if ($devUrl -notmatch "/dev/agentmesh-dev-x86_64-pc-windows-msvc\.tar\.gz$") {
+            throw "unexpected dev installer URL: $devUrl"
+          }
+          $devWrapperUrl = powershell -NoProfile -ExecutionPolicy Bypass -File installers/install-dev.ps1 -PrintUrl
+          if ($devWrapperUrl -notmatch "/dev/agentmesh-dev-x86_64-pc-windows-msvc\.tar\.gz$") {
+            throw "unexpected install-dev.ps1 URL: $devWrapperUrl"
+          }
       - name: Verify Windows installer banner rendering
         shell: powershell
         run: |
@@ -124,7 +132,10 @@ jobs:
                   && args[3] == "--bundle"
                   && Path::new(&args[4]).is_file()
                   && args[5] == "--certificate-identity-regexp"
-                  && args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
+                  && (
+                      args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
+                      || args[6] == r"^https://github.com/aranticlabs/agentmesh/.github/workflows/dev-release.yml@refs/heads/dev$"
+                  )
                   && args[7] == "--certificate-oidc-issuer"
                   && args[8] == "https://token.actions.githubusercontent.com"
                   && Path::new(&args[9]).is_file();
@@ -145,6 +156,23 @@ jobs:
           Assert-LastExitCode "install.ps1 failed for valid fake release"
           & (Join-Path $install "agentmesh.exe") --version
           Assert-LastExitCode "installed agentmesh.exe did not run"
+
+          $devRelease = Join-Path $tmp "releases\dev"
+          $devStage = Join-Path $tmp "dev-stage\agentmesh"
+          $devInstall = Join-Path $tmp "dev-install"
+          New-Item -ItemType Directory -Path $devRelease, $devStage, $devInstall -Force | Out-Null
+          Copy-Item target\release\agentmesh.exe (Join-Path $devStage "agentmesh.exe")
+          $devArtifact = "agentmesh-dev-x86_64-pc-windows-msvc.tar.gz"
+          tar -czf (Join-Path $devRelease $devArtifact) -C (Join-Path $tmp "dev-stage") agentmesh
+          Assert-LastExitCode "failed to create dev test release archive"
+          $devHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $devRelease $devArtifact)).Hash.ToLowerInvariant()
+          Set-Content -NoNewline -Path (Join-Path $devRelease "SHA256SUMS") -Value "$devHash  $devArtifact`n"
+          New-Item -ItemType File -Path (Join-Path $devRelease "SHA256SUMS.sig"), (Join-Path $devRelease "SHA256SUMS.bundle") -Force | Out-Null
+
+          powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel dev -InstallDir $devInstall
+          Assert-LastExitCode "install.ps1 failed for valid fake dev release"
+          & (Join-Path $devInstall "agentmesh.exe") --version
+          Assert-LastExitCode "installed dev agentmesh.exe did not run"
 
           Set-Content -NoNewline -Path (Join-Path $release "SHA256SUMS") -Value "0000  $artifact`n"
           powershell -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1 -Channel stable -InstallDir (Join-Path $tmp "bad-install")
@@ -238,13 +266,17 @@ jobs:
           case "$stable_tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
           case "$stable_version" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "failed to parse stable installer URL: $stable_artifact_url" >&2; exit 1 ;; esac
           nightly="$(sh installers/install.sh --print-url --channel=nightly)"
+          dev="$(sh installers/install.sh --print-url --channel=dev)"
+          dev_wrapper="$(sh installers/install-dev.sh --print-url)"
           case "$stable" in */"$stable_tag"/agentmesh-v"$stable_version"-*) ;; *) exit 1 ;; esac
           case "$nightly" in */nightly/*) ;; *) exit 1 ;; esac
+          case "$dev" in */dev/agentmesh-dev-*) ;; *) exit 1 ;; esac
+          case "$dev_wrapper" in */dev/agentmesh-dev-*) ;; *) exit 1 ;; esac
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           platform="$(sh installers/install.sh --print-platform)"
-          mkdir -p "$tmp/releases/$stable_tag" "$tmp/releases/nightly" "$tmp/cosign-base"
+          mkdir -p "$tmp/releases/$stable_tag" "$tmp/releases/nightly" "$tmp/releases/dev" "$tmp/cosign-base"
 
           cosign_artifact="$tmp/cosign-base/cosign-linux-amd64"
           cat >"$cosign_artifact" <<'EOF'
@@ -257,7 +289,11 @@ jobs:
           test "$4" = "--bundle"
           test -f "$5"
           test "$6" = "--certificate-identity-regexp"
-          test "$7" = "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*"
+          case "$7" in
+            "^https://github.com/aranticlabs/agentmesh/.github/workflows/release.yml@refs/tags/v.*") ;;
+            "^https://github.com/aranticlabs/agentmesh/.github/workflows/dev-release.yml@refs/heads/dev$") ;;
+            *) exit 1 ;;
+          esac
           test "$8" = "--certificate-oidc-issuer"
           test "$9" = "https://token.actions.githubusercontent.com"
           test -f "${10}"
@@ -282,8 +318,10 @@ jobs:
 
           stable_artifact="agentmesh-v$stable_version-$platform.tar.gz"
           nightly_artifact="agentmesh-nightly-$platform.tar.gz"
+          dev_artifact="agentmesh-dev-$platform.tar.gz"
           create_release "$stable_tag" "$stable_artifact"
           create_release "nightly" "$nightly_artifact"
+          create_release "dev" "$dev_artifact"
 
           export AGENTMESH_BASE_URL="file://$tmp/releases"
           export AGENTMESH_COSIGN_BASE_URL="file://$tmp/cosign-base"
@@ -293,6 +331,10 @@ jobs:
           "$tmp/shell-stable/agentmesh" --version
           PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-nightly" sh installers/install.sh --channel=nightly --install-dir="$tmp/shell-nightly"
           "$tmp/shell-nightly/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-dev" sh installers/install.sh --channel=dev --install-dir="$tmp/shell-dev"
+          "$tmp/shell-dev/agentmesh" --version
+          PATH="/usr/bin:/bin" AGENTMESH_COSIGN_DIR="$tmp/cosign-shell-dev-wrapper" sh installers/install-dev.sh --install-dir="$tmp/shell-dev-wrapper"
+          "$tmp/shell-dev-wrapper/agentmesh" --version
 
           e2e_repo="$tmp/e2e-repo"
           mkdir -p "$e2e_repo/.claude/skills/demo"

@@ -2,10 +2,12 @@
 
 This directory holds packaging wrappers around the single AgentMesh binary.
 
-| Path          | Purpose                   |
-| ------------- | ------------------------- |
-| `install.sh`  | macOS and Linux installer |
-| `install.ps1` | Windows installer         |
+| Path              | Purpose                             |
+| ----------------- | ----------------------------------- |
+| `install.sh`      | macOS and Linux installer           |
+| `install.ps1`     | Windows installer                   |
+| `install-dev.sh`  | macOS and Linux dev-channel wrapper |
+| `install-dev.ps1` | Windows dev-channel wrapper         |
 
 Release installers resolve the current platform archive, verify it against the published
 `SHA256SUMS` manifest, verify the manifest signature and Sigstore bundle with cosign, and install
@@ -30,6 +32,15 @@ From a clone of this repository:
 sh installers/install.sh
 ```
 
+Dev-channel tester install:
+
+```bash
+curl -fsSL https://agentmesh.sh/install-dev.sh | sh
+```
+
+The dev channel installs the mutable `dev` release built from the `dev` branch. Use it only for
+pre-release validation in test repositories.
+
 ### Windows
 
 Published one-liner (PowerShell):
@@ -42,6 +53,12 @@ From a clone of this repository:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File installers/install.ps1
+```
+
+Dev-channel tester install:
+
+```powershell
+irm https://agentmesh.sh/install-dev.ps1 | iex
 ```
 
 ### Build from source
