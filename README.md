@@ -2,9 +2,10 @@
 
 AgentMesh synchronizes project-level AI runtime context across coding tools.
 
-The v0.1 binary is a local-first Rust CLI with bundled Claude Code and Codex adapters. It
-normalizes project instructions, skills, and subagents into a shared repository model, then renders
-those entities back into each runtime's native file layout.
+The v0.2 binary is a local-first Rust CLI with bundled adapters for Claude Code, Codex,
+GitHub Copilot, Cursor, and Gemini CLI. It normalizes project instructions, rules, prompts,
+skills, subagents, commands, hooks, MCP bindings, and permission policies into a shared repository
+model, then renders supported entities back into each runtime's native file layout.
 
 Documentation: [agentmesh.sh](https://agentmesh.sh)
 
@@ -35,8 +36,14 @@ cargo build --workspace
 ## Quickstart
 
 **Prerequisites:** a git repository at your project root, and at least one supported runtime
-present or planned (Claude Code with `.claude/` and/or `CLAUDE.md`, or Codex with `.codex/` and/or
-`AGENTS.md`).
+present or planned:
+
+- Claude Code: `.claude/` and/or `CLAUDE.md`
+- Codex: `.codex/` and/or `AGENTS.md`
+- GitHub Copilot: `.github/copilot-instructions.md`, `.github/instructions/`,
+  `.github/prompts/`, `.github/skills/`, or `.github/agents/`
+- Cursor: `.cursor/rules/`
+- Gemini CLI: `GEMINI.md`, nested `GEMINI.md`, `.gemini/skills/`, or `.gemini/commands/`
 
 Preview detection without writing:
 
@@ -45,7 +52,8 @@ agentmesh scan
 ```
 
 Initialize AgentMesh from your project root. This detects runtimes, imports entities into the
-canonical `.ai/` model, propagates to other runtimes, installs hooks, and writes `agentmesh.lock`:
+canonical `.ai/` model, propagates to other runtimes, installs hooks for hook-capable runtimes,
+starts watcher coverage, and writes `agentmesh.lock`:
 
 ```bash
 cd /path/to/your/repo
@@ -73,6 +81,10 @@ git add AGENTS.md .ai/ agentmesh.lock
 git commit -m "chore: initialize AgentMesh sync"
 ```
 
+Commit native runtime files that are part of your team workflow, such as `CLAUDE.md`,
+`.claude/rules/`, `.codex/config.toml`, `.github/`, `.cursor/rules/`, `GEMINI.md`, `.gemini/`,
+and shared `.agents/skills/`.
+
 Do not commit machine-local hook files (`.claude/settings.local.json`, `.codex/hooks.json`). Each
 teammate runs `agentmesh init` on their machine. Add `.codex/hooks.json` to `.gitignore`.
 
@@ -81,12 +93,18 @@ open Codex in the repository and run any tool-backed action; when Codex asks whe
 AgentMesh hook command, approve it once. Sync still works via the watcher daemon, Claude hooks, and
 manual `agentmesh sync` until then.
 
-| Situation                  | Command                              |
-| -------------------------- | ------------------------------------ |
-| Added a runtime after init | `agentmesh install --runtime <name>` |
-| Upgraded the binary        | `agentmesh upgrade`                  |
-| Commit-time drift check    | `agentmesh install --git-pre-commit` |
-| CI pipeline                | `agentmesh sync --check`             |
+Cursor, GitHub Copilot, and Gemini CLI are watcher/manual-sync runtimes in v0.2. AgentMesh imports
+and emits their write-enabled project files, but does not install native runtime hooks for them.
+`agentmesh doctor` reports read-only and deferred surfaces instead of silently writing unsupported
+files.
+
+| Situation                       | Command                              |
+| ------------------------------- | ------------------------------------ |
+| Added Claude/Codex after init   | `agentmesh install --runtime <name>` |
+| Added hookless runtime files    | `agentmesh sync --await-drain`       |
+| Upgraded the binary             | `agentmesh upgrade`                  |
+| Commit-time drift check         | `agentmesh install --git-pre-commit` |
+| CI pipeline                     | `agentmesh sync --check`             |
 
 Full walkthrough: [agentmesh.sh/quickstart](https://agentmesh.sh/quickstart)
 
@@ -98,9 +116,9 @@ To start AgentMesh again for an initialized repository:
 agentmesh start -y
 ```
 
-This refreshes machine-local AgentMesh state, installs AgentMesh-owned hooks for detected runtimes,
-and starts the watcher so direct edits to `AGENTS.md`, `CLAUDE.md`, and `.ai/` files sync
-immediately. It keeps `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` intact.
+This refreshes machine-local AgentMesh state, installs AgentMesh-owned hooks for detected
+hook-capable runtimes, and starts the watcher so direct edits to supported native files sync
+promptly. It keeps `agentmesh.lock`, `.ai/`, and runtime files such as `AGENTS.md` intact.
 
 To stop AgentMesh for the current repository while keeping all repository state and AgentMesh installed on this computer:
 

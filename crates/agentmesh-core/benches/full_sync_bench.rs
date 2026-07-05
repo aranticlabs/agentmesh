@@ -59,11 +59,51 @@ fn with_runtime_adapter<T>(
                 message: source.to_string(),
             })
         }
+        "copilot" => {
+            let adapter = agentmesh_adapter_copilot::CopilotAdapter;
+            call(&adapter).map_err(|source| PipelineError::Adapter {
+                runtime: runtime.clone(),
+                message: source.to_string(),
+            })
+        }
+        "cursor" => {
+            let adapter = agentmesh_adapter_cursor::CursorAdapter;
+            call(&adapter).map_err(|source| PipelineError::Adapter {
+                runtime: runtime.clone(),
+                message: source.to_string(),
+            })
+        }
+        "gemini" => {
+            let adapter = agentmesh_adapter_gemini::GeminiAdapter;
+            call(&adapter).map_err(|source| PipelineError::Adapter {
+                runtime: runtime.clone(),
+                message: source.to_string(),
+            })
+        }
         _ => Err(PipelineError::Adapter {
             runtime: runtime.clone(),
             message: "unknown runtime adapter".to_string(),
         }),
     }
+}
+
+fn write_seed_file(
+    path: &Path,
+    contents: impl AsRef<[u8]>,
+    action: &'static str,
+) -> Result<(), PipelineError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PipelineError::Io {
+            action: "create benchmark fixture directory",
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(path, contents).map_err(|source| PipelineError::Io {
+        action,
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 fn seed_repo() -> Result<(TempDir, PathBuf), PipelineError> {
@@ -83,6 +123,31 @@ fn seed_repo() -> Result<(TempDir, PathBuf), PipelineError> {
         path: repo.join(".codex"),
         source,
     })?;
+    write_seed_file(
+        &repo.join(".github/copilot-instructions.md"),
+        "Benchmark instructions.\n",
+        "write benchmark Copilot instructions",
+    )?;
+    write_seed_file(
+        &repo.join(".github/prompts/performance.prompt.md"),
+        "---\ndescription: Performance prompt\nmode: ask\n---\nReview performance.\n",
+        "write benchmark Copilot prompt",
+    )?;
+    write_seed_file(
+        &repo.join(".cursor/rules/performance.mdc"),
+        "---\ndescription: Performance rule\nalwaysApply: true\n---\nKeep hot paths efficient.\n",
+        "write benchmark Cursor rule",
+    )?;
+    write_seed_file(
+        &repo.join("GEMINI.md"),
+        "Benchmark instructions.\n",
+        "write benchmark Gemini context",
+    )?;
+    write_seed_file(
+        &repo.join(".gemini/commands/performance.toml"),
+        "description = \"Performance command\"\nprompt = \"Review performance for {{args}}.\"\n",
+        "write benchmark Gemini command",
+    )?;
     for index in 0..1000 {
         let slug = format!("skill-{index}");
         let skill_dir = repo.join(".claude/skills").join(&slug);

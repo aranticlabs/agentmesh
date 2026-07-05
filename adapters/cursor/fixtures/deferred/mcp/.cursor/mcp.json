@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "repo-tools": {
+      "command": "repo-tools",
+      "args": ["serve"]
+    }
+  }
+}

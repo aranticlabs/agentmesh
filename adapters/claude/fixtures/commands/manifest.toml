@@ -1,0 +1,37 @@
+[[fixture]]
+name = "review-command"
+surface = "claude.project-command"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "review/.claude/commands/review.md"
+expected_canonical_id = "command:review"
+expected_emitted_path = ".claude/commands/review.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "namespaced-command"
+surface = "claude.project-command"
+cases = ["minimum_valid", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "namespaced/.claude/commands/git/commit.md"
+expected_canonical_id = "command:git:commit"
+expected_emitted_path = ".claude/commands/git/commit.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "command-invalid-frontmatter"
+surface = "claude.project-command"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/skills"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "command"
+fixture_file_path = "invalid/.claude/commands/broken.md"
+expected_canonical_id = "command:broken"
+expected_diagnostics = ["failed to parse frontmatter"]

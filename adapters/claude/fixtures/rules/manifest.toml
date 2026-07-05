@@ -1,0 +1,50 @@
+[[fixture]]
+name = "always-on-rule"
+surface = "claude.project-rule"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/memory"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "always/.claude/rules/security.md"
+expected_canonical_id = "rule:security"
+expected_emitted_path = ".claude/rules/security.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "path-scoped-rule"
+surface = "claude.project-rule"
+cases = ["minimum_valid", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/memory"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "scoped/.claude/rules/api.md"
+expected_canonical_id = "instructions:scoped:packages-api"
+expected_emitted_path = ".claude/rules/api.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "unknown-frontmatter-preservation"
+surface = "claude.project-rule"
+cases = ["unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/memory"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "unknown/.claude/rules/preserve-metadata.md"
+expected_canonical_id = "rule:preserve-metadata"
+expected_emitted_path = ".claude/rules/preserve-metadata.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "invalid-frontmatter"
+surface = "claude.project-rule"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/memory"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "rule"
+fixture_file_path = "invalid/.claude/rules/broken.md"
+expected_canonical_id = "rule:broken"
+expected_diagnostics = ["failed to parse frontmatter"]

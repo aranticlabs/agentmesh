@@ -1,5 +1,6 @@
 //! Core domain APIs and persisted state shapes for AgentMesh.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -94,6 +95,24 @@ pub struct SyncSummary {
     pub pending_conflicts: usize,
     /// Number of entities skipped because a runtime lacks support for them.
     pub capability_skipped: usize,
+    /// Detailed unsupported capability skips.
+    pub capability_skips: Vec<CapabilitySkipFinding>,
+}
+
+/// Details for one entity skipped because a runtime lacks native support.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub struct CapabilitySkipFinding {
+    /// Runtime that cannot represent the entity.
+    pub runtime: RuntimeName,
+    /// Entity ID that could not be emitted.
+    pub entity_id: EntityId,
+    /// Entity type that could not be emitted.
+    pub entity_type: EntityType,
+    /// Configured fallback behavior.
+    pub fallback: config::CapabilityFallback,
+    /// Existing lockfile locations for the skipped entity.
+    pub locations: BTreeMap<LocationKey, PathBuf>,
 }
 
 /// Health report for a repository.

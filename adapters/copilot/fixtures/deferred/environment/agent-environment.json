@@ -1,0 +1,8 @@
+{
+  "variables": {
+    "RUST_LOG": "info"
+  },
+  "secrets": {
+    "CARGO_REGISTRY_TOKEN": "configured-in-github"
+  }
+}

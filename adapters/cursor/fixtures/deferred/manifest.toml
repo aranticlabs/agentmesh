@@ -1,0 +1,61 @@
+[[fixture]]
+name = "cursor-skill-detection"
+surface = "cursor.skills"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://cursor.com/docs/skills"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "skill"
+fixture_file_path = "skills/.cursor/skills/repo-audit/SKILL.md"
+fixture_root_path = "skills/.cursor/skills/repo-audit"
+expected_canonical_id = "skill:cursor-repo-audit"
+expected_files = ["SKILL.md"]
+expected_diagnostics = ["Cursor skills are deferred and must never be emitted"]
+
+[[fixture]]
+name = "cursor-hook-detection"
+surface = "cursor.hooks"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://cursor.com/docs/hooks"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "hook"
+fixture_file_path = "hooks/.cursor/hooks.json"
+expected_canonical_id = "hook:cursor-project"
+expected_diagnostics = ["Cursor hooks are deferred and must never be emitted"]
+
+[[fixture]]
+name = "cursor-command-detection"
+surface = "cursor.commands"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://cursor.com/docs/cli/using"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "command"
+fixture_file_path = "commands/.cursor/commands/review.md"
+expected_canonical_id = "command:cursor-review"
+expected_diagnostics = ["Cursor commands are deferred and must never be emitted"]
+
+[[fixture]]
+name = "cursor-subagent-detection"
+surface = "cursor.subagents"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://cursor.com/docs/subagents"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "subagent"
+fixture_file_path = "subagents/.cursor/agents/investigator.md"
+expected_canonical_id = "subagent:cursor-investigator"
+expected_diagnostics = ["Cursor subagents are deferred and must never be emitted"]
+
+[[fixture]]
+name = "cursor-mcp-detection"
+surface = "cursor.mcp"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://cursor.com/docs/mcp"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "mcp/.cursor/mcp.json"
+expected_canonical_id = "mcp-binding:cursor-project"
+expected_diagnostics = ["Cursor MCP configuration is deferred and must never be emitted"]

@@ -1,0 +1,27 @@
+[[fixture]]
+name = "root-instructions"
+surface = "codex.root-instructions"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/guides/agents-md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:root"
+fixture_file_path = "root/AGENTS.md"
+expected_canonical_id = "instructions:root"
+expected_emitted_path = "AGENTS.md"
+expected_diagnostics = []
+expected_behaviors = ["plain Markdown AGENTS.md files have no native metadata syntax to reject"]
+
+[[fixture]]
+name = "scoped-instructions"
+surface = "codex.scoped-instructions"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://developers.openai.com/codex/guides/agents-md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "nested/packages/api/AGENTS.md"
+expected_canonical_id = "instructions:scoped:packages-api"
+expected_emitted_path = "packages/api/AGENTS.md"
+expected_diagnostics = []
+expected_behaviors = ["nested AGENTS.md scope is derived from the containing directory"]

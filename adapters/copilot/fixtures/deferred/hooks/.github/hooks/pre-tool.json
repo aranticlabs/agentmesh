@@ -1,0 +1,4 @@
+{
+  "event": "preToolUse",
+  "command": "echo copilot-hook"
+}

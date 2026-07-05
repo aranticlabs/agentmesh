@@ -1,0 +1,6 @@
+description = "Draft a commit message from the staged changes."
+prompt = """
+Inspect the staged diff and draft a concise commit message.
+
+Do not modify files. Arguments: {{args}}
+"""

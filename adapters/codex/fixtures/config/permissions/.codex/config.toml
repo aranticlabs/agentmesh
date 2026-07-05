@@ -1,0 +1,6 @@
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[profiles.locked-down]
+approval_policy = "never"
+sandbox_mode = "read-only"

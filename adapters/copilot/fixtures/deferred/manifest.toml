@@ -1,0 +1,47 @@
+[[fixture]]
+name = "copilot-hook-detection"
+surface = "copilot.hooks"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://docs.github.com/en/copilot"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "hook"
+fixture_file_path = "hooks/.github/hooks/pre-tool.json"
+expected_canonical_id = "hook:copilot-pre-tool"
+expected_diagnostics = ["Copilot hook surfaces are deferred and must never be emitted"]
+
+[[fixture]]
+name = "copilot-repository-mcp-settings"
+surface = "copilot.repository-mcp"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://docs.github.com/copilot/how-tos/copilot-on-github/customize-copilot/configure-mcp-servers"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "mcp/repository-mcp-settings.json"
+expected_canonical_id = "mcp-binding:copilot-repository"
+expected_diagnostics = ["repository MCP settings are deferred and must never be emitted"]
+
+[[fixture]]
+name = "copilot-setup-steps"
+surface = "copilot.setup-steps"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://docs.github.com/copilot/how-tos/use-copilot-agents/coding-agent/customize-the-agent-environment"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "command"
+fixture_file_path = "setup/.github/workflows/copilot-setup-steps.yml"
+expected_canonical_id = "command:copilot-setup-steps"
+expected_diagnostics = ["Copilot setup steps configure execution environment and must never be emitted"]
+
+[[fixture]]
+name = "copilot-agent-environment"
+surface = "copilot.agent-environment"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/configure-secrets-and-variables"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "environment/agent-environment.json"
+expected_canonical_id = "permission-policy:copilot-agent-environment"
+expected_diagnostics = ["Copilot agent environment variables and secrets are deferred and must never be emitted"]

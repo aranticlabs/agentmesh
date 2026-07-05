@@ -12,7 +12,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// Adapter protocol version supported by this workspace.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// JSON-RPC protocol marker.
 pub const JSONRPC_VERSION: &str = "2.0";
@@ -26,6 +26,18 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 pub enum EntityType {
     /// Project-wide instructions.
     Instructions,
+    /// Runtime rule or scoped instruction metadata.
+    Rule,
+    /// Reusable prompt file.
+    Prompt,
+    /// Runtime command definition.
+    Command,
+    /// Runtime hook configuration.
+    Hook,
+    /// MCP server or tool binding configuration.
+    McpBinding,
+    /// Runtime permission or policy configuration.
+    PermissionPolicy,
     /// A named skill with optional supporting files.
     Skill,
     /// A delegated task agent.
@@ -38,9 +50,24 @@ impl EntityType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Instructions => "instructions",
+            Self::Rule => "rule",
+            Self::Prompt => "prompt",
+            Self::Command => "command",
+            Self::Hook => "hook",
+            Self::McpBinding => "mcp-binding",
+            Self::PermissionPolicy => "permission-policy",
             Self::Skill => "skill",
             Self::Subagent => "subagent",
         }
+    }
+
+    /// Returns whether the entity is configuration data that must never be executed by core.
+    #[must_use]
+    pub const fn is_configuration_only(self) -> bool {
+        matches!(
+            self,
+            Self::Command | Self::Hook | Self::McpBinding | Self::PermissionPolicy
+        )
     }
 }
 
@@ -516,6 +543,9 @@ pub struct EmitEntity {
     /// Instruction scope when relevant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// Preferred runtime source path when the entity has a durable native location.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<PathBuf>,
     /// Entity file contents keyed by entity-relative path.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<PathBuf, EntityFile>,
@@ -901,6 +931,36 @@ mod tests {
         };
 
         assert_eq!(value["encoding"], "utf-8");
+    }
+
+    #[test]
+    fn serializes_entity_type_spellings() {
+        let cases = [
+            (EntityType::Instructions, "instructions"),
+            (EntityType::Rule, "rule"),
+            (EntityType::Prompt, "prompt"),
+            (EntityType::Command, "command"),
+            (EntityType::Hook, "hook"),
+            (EntityType::McpBinding, "mcp-binding"),
+            (EntityType::PermissionPolicy, "permission-policy"),
+            (EntityType::Skill, "skill"),
+            (EntityType::Subagent, "subagent"),
+        ];
+
+        for (entity_type, expected) in cases {
+            let encoded = match serde_json::to_string(&entity_type) {
+                Ok(encoded) => encoded,
+                Err(error) => panic!("entity type should serialize: {error}"),
+            };
+            let decoded = match serde_json::from_str::<EntityType>(&encoded) {
+                Ok(decoded) => decoded,
+                Err(error) => panic!("entity type should deserialize: {error}"),
+            };
+
+            assert_eq!(encoded, format!("\"{expected}\""));
+            assert_eq!(decoded, entity_type);
+            assert_eq!(entity_type.as_str(), expected);
+        }
     }
 
     #[test]

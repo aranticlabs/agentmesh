@@ -1,0 +1,24 @@
+[[fixture]]
+name = "release-notes-prompt"
+surface = "copilot.prompt-file"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.github.com/en/copilot/reference/customization-cheat-sheet"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "prompt"
+fixture_file_path = "release/.github/prompts/release-notes.prompt.md"
+expected_canonical_id = "prompt:release-notes"
+expected_emitted_path = ".github/prompts/release-notes.prompt.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "prompt-invalid-frontmatter"
+surface = "copilot.prompt-file"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.github.com/en/copilot/reference/customization-cheat-sheet"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "prompt"
+fixture_file_path = "invalid/.github/prompts/broken.prompt.md"
+expected_canonical_id = "prompt:broken"
+expected_diagnostics = ["invalid prompt frontmatter must not be overwritten"]

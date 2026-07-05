@@ -10,6 +10,9 @@ agentmesh
   -> agentmesh-adapter-sdk-rust
   -> adapters/claude
   -> adapters/codex
+  -> adapters/copilot
+  -> adapters/cursor
+  -> adapters/gemini
 
 agentmesh-core <-> agentmesh-protocol
 adapters/*     <-> agentmesh-protocol
@@ -38,16 +41,44 @@ service registration writes platform launch definitions without silently install
 `adapters/claude` imports and emits Claude-native files:
 
 - `CLAUDE.md`
+- `.claude/rules/**/*.md`
 - `.claude/skills/<name>/SKILL.md`
 - `.claude/agents/<name>.md`
+- `.claude/commands/**/*.md`
+- `.claude/settings.json` project hook and permission sections
+- `.mcp.json`
 - `.claude/settings.local.json` for hook installation
 
 `adapters/codex` imports and emits Codex-native files:
 
 - `AGENTS.md`
+- nested `AGENTS.md`
 - `.codex/skills/<name>/SKILL.md`
+- `.agents/skills/<name>/SKILL.md`
 - `.codex/agents/<name>.toml`
+- `.codex/config.toml` project MCP and permission sections
 - `.codex/hooks.json` for hook installation
+
+`adapters/copilot` imports and emits GitHub Copilot-native files:
+
+- `.github/copilot-instructions.md`
+- `.github/instructions/**/*.instructions.md`
+- `.github/prompts/*.prompt.md`
+- `.github/skills/<name>/SKILL.md`
+- `.agents/skills/<name>/SKILL.md`
+- `.github/agents/*.agent.md` and `.github/agents/*.md`
+
+`adapters/cursor` imports and emits Cursor-native files:
+
+- `.cursor/rules/**/*.mdc`
+
+`adapters/gemini` imports and emits Gemini CLI-native files:
+
+- `GEMINI.md`
+- nested `GEMINI.md`
+- `.gemini/skills/<name>/SKILL.md`
+- `.agents/skills/<name>/SKILL.md`
+- `.gemini/commands/**/*.toml`
 
 ## Runtime Boundaries
 

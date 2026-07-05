@@ -253,6 +253,13 @@ fn json_string_fragment(value: &str) -> String {
     encoded.trim_matches('"').to_string()
 }
 
+fn runtime_json<'a>(value: &'a Value, name: &str) -> &'a Value {
+    value["runtimes"]
+        .as_array()
+        .and_then(|runtimes| runtimes.iter().find(|runtime| runtime["name"] == name))
+        .unwrap_or_else(|| panic!("runtime {name} should be present in JSON"))
+}
+
 fn find_named_file(root: &Path, file_name: &str) -> Option<PathBuf> {
     let entries = fs::read_dir(root).ok()?;
     for entry in entries {
@@ -540,6 +547,172 @@ fn scan_reports_runtime_entities_without_writing_repository_state() {
     assert_eq!(json["runtimes"][0]["present"], true);
     assert_eq!(json["runtimes"][1]["name"], "codex");
     assert_eq!(json["runtimes"][1]["present"], true);
+    assert!(!repo.join(".ai").exists());
+    assert!(!repo.join("agentmesh.lock").exists());
+}
+
+#[test]
+fn scan_status_and_doctor_cover_v02_runtime_surfaces() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(
+        repo.join(".claude/rules/security.md"),
+        "---\ndescription: Security\n---\nReview security.\n",
+    );
+    write(
+        repo.join(".claude/commands/review.md"),
+        "---\ndescription: Review\n---\nReview changes.\n",
+    );
+    write(
+        repo.join(".codex/skills/repo-map/SKILL.md"),
+        "---\nname: repo-map\n---\nMap the repository.\n",
+    );
+    write(repo.join(".codex/hooks.json"), r#"{"hooks":{}}"#);
+    write(
+        repo.join(".codex/config.toml"),
+        "[mcp_servers.repo]\ncommand = \"repo\"\n\n[hooks]\n",
+    );
+    write(repo.join(".codex/rules/strict.rules"), "always\n");
+    write(repo.join(".codex/prompts/release.md"), "Release prompt\n");
+    write(repo.join(".codex/commands/review.md"), "Review command\n");
+    write(repo.join(".github/copilot-instructions.md"), "# Copilot\n");
+    write(
+        repo.join(".github/instructions/api.instructions.md"),
+        "---\napplyTo: \"crates/api/**\"\n---\n# API\n",
+    );
+    write(
+        repo.join(".github/prompts/release.prompt.md"),
+        "---\ndescription: Release\n---\nWrite release notes.\n",
+    );
+    write(
+        repo.join(".github/agents/security-reviewer.agent.md"),
+        "---\nname: security-reviewer\n---\nReview security.\n",
+    );
+    write(
+        repo.join(".github/workflows/copilot-setup-steps.yml"),
+        "steps: []\n",
+    );
+    write(repo.join(".github/hooks/pre-tool.json"), "{}\n");
+    write(repo.join("mcp/repository-mcp-settings.json"), "{}\n");
+    write(repo.join("environment/agent-environment.json"), "{}\n");
+    write(
+        repo.join(".cursor/rules/security.mdc"),
+        "---\ndescription: Security\nalwaysApply: true\n---\nCursor security.\n",
+    );
+    write(
+        repo.join(".cursor/skills/repo-audit/SKILL.md"),
+        "# Deferred Cursor skill\n",
+    );
+    write(repo.join(".cursor/hooks.json"), "{}\n");
+    write(repo.join(".cursor/commands/review.md"), "# Review\n");
+    write(repo.join(".cursor/agents/investigator.md"), "# Agent\n");
+    write(repo.join(".cursor/mcp.json"), "{}\n");
+    write(repo.join("GEMINI.md"), "# Gemini\n");
+    write(repo.join("packages/api/GEMINI.md"), "# Gemini API\n");
+    write(
+        repo.join(".gemini/skills/release-check/SKILL.md"),
+        "---\nname: release-check\n---\nCheck release.\n",
+    );
+    write(
+        repo.join(".gemini/commands/review.toml"),
+        "description = \"Review\"\nprompt = \"Review {{args}}\"\n",
+    );
+    write(
+        repo.join(".gemini/settings.json"),
+        r#"{"mcpServers":{"repo":{"command":"repo"}},"policyPaths":[".gemini/policies"],"context":{"fileName":["CONTEXT.md"]}}"#,
+    );
+    write(
+        repo.join(".gemini/agents/investigator.md"),
+        "# Deferred agent\n",
+    );
+    write(repo.join(".gemini/hooks/guard.json"), "{}\n");
+    write(repo.join(".gemini/extensions/sample/manifest.json"), "{}\n");
+    write(repo.join("gemini-extension.json"), "{}\n");
+
+    let scan = stdout_json(&run_agentmesh(&repo, &cache, &["scan", "--json"]));
+    for name in ["claude", "codex", "copilot", "cursor", "gemini"] {
+        assert_eq!(runtime_json(&scan, name)["present"], true);
+    }
+    assert!(
+        runtime_json(&scan, "copilot")["entities"]
+            .as_array()
+            .unwrap_or_else(|| panic!("copilot entities should be an array"))
+            .iter()
+            .any(|entity| entity == "prompt:release")
+    );
+    assert!(
+        runtime_json(&scan, "cursor")["entities"]
+            .as_array()
+            .unwrap_or_else(|| panic!("cursor entities should be an array"))
+            .iter()
+            .any(|entity| entity == "rule:security")
+    );
+    assert!(
+        runtime_json(&scan, "gemini")["entities"]
+            .as_array()
+            .unwrap_or_else(|| panic!("gemini entities should be an array"))
+            .iter()
+            .any(|entity| entity == "command:review")
+    );
+
+    let status = stdout_json(&run_agentmesh(&repo, &cache, &["status", "--json"]));
+    for name in ["copilot", "cursor", "gemini"] {
+        let runtime = runtime_json(&status, name);
+        assert_eq!(runtime["present"], true);
+        assert_eq!(runtime["hook_supported"], false);
+        assert_eq!(runtime["hook_installed"], false);
+    }
+    let status_verbose = run_agentmesh(&repo, &cache, &["--no-color", "-v", "status"]);
+    assert_success(&status_verbose);
+    let status_verbose_stdout = String::from_utf8_lossy(&status_verbose.stdout);
+    for expected in [
+        "copilot present=true hook=unsupported",
+        "cursor  present=true hook=unsupported",
+        "gemini  present=true hook=unsupported",
+    ] {
+        assert!(
+            status_verbose_stdout.contains(expected),
+            "verbose status should include {expected}; stdout: {status_verbose_stdout}"
+        );
+    }
+
+    let doctor = stdout_json(&run_agentmesh(&repo, &cache, &["doctor", "--json"]));
+    let findings = doctor["core_findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("core findings should be an array"))
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    for expected in [
+        "codex_inline_config_hooks: read-only diagnostic",
+        "codex_experimental_rules: read-only diagnostic",
+        "codex_custom_prompts: deferred",
+        "codex_project_commands: deferred",
+        "copilot_hooks: deferred",
+        "copilot_repository_mcp: deferred",
+        "copilot_setup_steps: deferred",
+        "copilot_agent_environment: deferred",
+        "cursor_skills: deferred",
+        "cursor_hooks: deferred",
+        "cursor_commands: deferred",
+        "cursor_subagents: deferred",
+        "cursor_mcp: deferred",
+        "gemini_project_mcp: read-only diagnostic",
+        "gemini_policy_settings: read-only diagnostic",
+        "gemini_custom_context_filenames: deferred",
+        "gemini_hooks: deferred",
+        "gemini_subagents: deferred",
+        "gemini_extensions: deferred",
+    ] {
+        assert!(
+            findings.iter().any(|finding| finding.starts_with(expected)),
+            "missing finding {expected}; findings: {findings:?}"
+        );
+    }
     assert!(!repo.join(".ai").exists());
     assert!(!repo.join("agentmesh.lock").exists());
 }
@@ -895,6 +1068,37 @@ fn install_stop_and_start_are_machine_local_and_surgical() {
 
     let stop = run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]);
     assert_success(&stop);
+}
+
+#[test]
+fn install_dry_run_accepts_hookless_bundled_runtimes() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join(".keep"), "");
+
+    for (runtime, label) in [
+        ("cursor", "Cursor"),
+        ("copilot", "Copilot"),
+        ("gemini", "Gemini"),
+    ] {
+        let output = run_agentmesh(
+            &repo,
+            &cache,
+            &["--no-color", "install", "--runtime", runtime, "--dry-run"],
+        );
+        assert_success(&output);
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(&format!(
+                "{label} has no installable AgentMesh runtime hook"
+            )),
+            "stdout should explain hookless {runtime} runtime: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
 }
 
 #[test]
@@ -1424,6 +1628,55 @@ fn status_and_doctor_exit_nonzero_for_pending_conflicts() {
     assert_eq!(value["core_health"]["pending_syncs"], 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn doctor_and_status_render_cursor_detect_errors() {
+    use std::os::unix::fs::symlink;
+
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let outside = temp.path().join("outside");
+    write(repo.join(".cursor/.keep"), "");
+    std::fs::create_dir_all(&outside)
+        .unwrap_or_else(|error| panic!("outside dir should be created: {error}"));
+    symlink(&outside, repo.join(".cursor/rules"))
+        .unwrap_or_else(|error| panic!("cursor rules symlink should be created: {error}"));
+
+    let doctor = run_agentmesh(&repo, &cache, &["doctor", "--json"]);
+    let status = run_agentmesh(&repo, &cache, &["status", "--json"]);
+
+    assert_success(&doctor);
+    assert_success(&status);
+    let doctor_json = parse_stdout_json(&doctor);
+    let findings = doctor_json["core_findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("core findings should be an array"));
+    assert!(findings.iter().any(|finding| {
+        finding
+            .as_str()
+            .is_some_and(|finding| finding.starts_with("adapter_cursor_detect_error:"))
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding.as_str().is_some_and(|finding| {
+            finding == "cursor_rule_invalid: .cursor/rules: symlinked path is not supported"
+        })
+    }));
+    let status_json = parse_stdout_json(&status);
+    let cursor = status_json["runtimes"]
+        .as_array()
+        .and_then(|runtimes| runtimes.iter().find(|runtime| runtime["name"] == "cursor"))
+        .unwrap_or_else(|| panic!("cursor runtime snapshot should be present"));
+    assert!(
+        cursor["import_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("detect failed"))
+    );
+}
+
 #[test]
 fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
     let temp = match tempfile::tempdir() {
@@ -1466,6 +1719,101 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
     }
 
     assert_success(&run_agentmesh(&repo, &cache, &["--silent", "stop", "-y"]));
+}
+
+#[test]
+fn legacy_schema_one_lockfile_syncs_without_enabling_absent_runtimes() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join("AGENTS.md"), "Legacy instructions.\n");
+    write(repo.join("CLAUDE.md"), "Legacy instructions.\n");
+    write(
+        repo.join(".claude/skills/legacy/SKILL.md"),
+        "---\nname: legacy\n---\nLegacy skill.\n",
+    );
+    write(
+        repo.join(".codex/skills/legacy/SKILL.md"),
+        "---\nname: legacy\n---\nLegacy skill.\n",
+    );
+    write(
+        repo.join("agentmesh.lock"),
+        r#"version: 1
+schema: 1
+entities:
+  instructions:root:
+    type: instructions
+    scope: root
+    locations:
+      .ai: instructions/root.md
+      .claude: ../CLAUDE.md
+      .codex: ../AGENTS.md
+    canonical_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    emitted_native_sha256: {}
+  skill:legacy:
+    type: skill
+    locations:
+      .ai: skills/legacy/SKILL.md
+      .claude: skills/legacy/SKILL.md
+      .codex: skills/legacy/SKILL.md
+    canonical_sha256: fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    emitted_native_sha256: {}
+adapters:
+  claude:
+    mode: bundled
+    protocol_version: 1
+    entities:
+      - instructions
+      - skill
+      - subagent
+    hooks:
+      - post-tool-use
+  codex:
+    mode: bundled
+    protocol_version: 1
+    entities:
+      - instructions
+      - skill
+      - subagent
+    hooks:
+      - post-tool-use
+"#,
+    );
+
+    assert_success(&run_agentmesh(
+        &repo,
+        &cache,
+        &["--silent", "sync", "--await-drain"],
+    ));
+
+    let lockfile = read(repo.join("agentmesh.lock"));
+    assert!(lockfile.contains("schema: 2"));
+    assert!(lockfile.contains("entity_schema: 1"));
+    assert!(lockfile.contains("  claude:"));
+    assert!(lockfile.contains("  codex:"));
+    assert!(!lockfile.contains("  copilot:"));
+    assert!(!lockfile.contains("  cursor:"));
+    assert!(!lockfile.contains("  gemini:"));
+    assert!(repo.join(".ai/skills/legacy/SKILL.md").exists());
+    assert!(!repo.join(".github").exists());
+    assert!(!repo.join(".cursor").exists());
+    assert!(!repo.join(".gemini").exists());
+    assert!(!repo.join("GEMINI.md").exists());
+
+    let status = stdout_json(&run_agentmesh(
+        &repo,
+        &cache,
+        &["--silent", "status", "--json"],
+    ));
+    assert_eq!(status["lockfile"]["schema"], 2);
+    assert_eq!(runtime_json(&status, "claude")["present"], true);
+    assert_eq!(runtime_json(&status, "codex")["present"], true);
+    assert_eq!(runtime_json(&status, "copilot")["present"], false);
+    assert_eq!(runtime_json(&status, "cursor")["present"], false);
+    assert_eq!(runtime_json(&status, "gemini")["present"], false);
 }
 
 #[test]
@@ -1769,6 +2117,214 @@ fn sync_check_exit_codes_distinguish_generic_drift_and_strict_conflict() {
 
     let strict = run_agentmesh(&repo, &cache, &["--silent", "sync", "--check"]);
     assert_exit_code(&strict, 2);
+}
+
+#[test]
+fn sync_check_reports_strict_capability_skip_details() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(
+        repo.join("agentmesh.config.yaml"),
+        "ci:\n  fail_on_capability_skip: true\n",
+    );
+    write(repo.join(".codex/.keep"), "");
+    write(
+        repo.join(".claude/commands/review.md"),
+        "---\ndescription: Review changes\n---\nReview the current diff.\n",
+    );
+
+    let output = run_agentmesh(&repo, &cache, &["sync", "--check"]);
+    assert_exit_code(&output, 2);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("capability_skipped=1"));
+    assert!(stdout.contains(
+        "capability_skip runtime=codex entity=command:review type=command fallback=warn"
+    ));
+    assert!(stdout.contains(".claude:commands/review.md"));
+}
+
+#[test]
+fn sync_check_detects_v02_native_drift_without_writing() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join("GEMINI.md"), "# Gemini root\n");
+    write(repo.join("packages/api/GEMINI.md"), "# Gemini API\n");
+    write(
+        repo.join(".gemini/skills/release-check/SKILL.md"),
+        "---\nname: release-check\n---\nCheck release.\n",
+    );
+    write(
+        repo.join(".gemini/commands/review.toml"),
+        "description = \"Review\"\nprompt = \"Review {{args}}\"\n",
+    );
+    write(
+        repo.join(".github/instructions/api.instructions.md"),
+        "---\napplyTo: \"crates/api/**\"\n---\n# API instructions\n",
+    );
+    write(
+        repo.join(".github/prompts/release.prompt.md"),
+        "---\ndescription: Release\n---\nWrite release notes.\n",
+    );
+    write(
+        repo.join(".github/skills/repo-map/SKILL.md"),
+        "---\nname: repo-map\n---\nMap repository.\n",
+    );
+    write(
+        repo.join(".github/agents/security-reviewer.agent.md"),
+        "---\nname: security-reviewer\n---\nReview security.\n",
+    );
+    write(
+        repo.join(".cursor/rules/security.mdc"),
+        "---\ndescription: Security\nalwaysApply: true\n---\nCursor security.\n",
+    );
+    assert_success(&run_agentmesh(
+        &repo,
+        &cache,
+        &["--silent", "sync", "--await-drain"],
+    ));
+    let lockfile_before = read(repo.join("agentmesh.lock"));
+    let canonical_command_before = read(repo.join(".ai/commands/review.md"));
+    assert!(canonical_command_before.contains("Review {{args}}"));
+    write(repo.join("GEMINI.md"), "# Changed Gemini root\n");
+    write(
+        repo.join("packages/api/GEMINI.md"),
+        "# Changed Gemini API\n",
+    );
+    write(
+        repo.join(".gemini/skills/release-check/SKILL.md"),
+        "---\nname: release-check\n---\nChanged release.\n",
+    );
+    write(
+        repo.join(".gemini/commands/review.toml"),
+        "description = \"Review\"\nprompt = \"Changed {{args}}\"\n",
+    );
+    write(
+        repo.join(".github/instructions/api.instructions.md"),
+        "---\napplyTo: \"crates/api/**\"\n---\n# Changed API instructions\n",
+    );
+    write(
+        repo.join(".github/prompts/release.prompt.md"),
+        "---\ndescription: Release\n---\nChanged release notes.\n",
+    );
+    write(
+        repo.join(".github/skills/repo-map/SKILL.md"),
+        "---\nname: repo-map\n---\nChanged map.\n",
+    );
+    write(
+        repo.join(".github/agents/security-reviewer.agent.md"),
+        "---\nname: security-reviewer\n---\nChanged security review.\n",
+    );
+    write(
+        repo.join(".cursor/rules/security.mdc"),
+        "---\ndescription: Security\nalwaysApply: true\n---\nChanged cursor security.\n",
+    );
+
+    let drift = run_agentmesh(&repo, &cache, &["sync", "--check"]);
+
+    assert_exit_code(&drift, 1);
+    let stdout = String::from_utf8_lossy(&drift.stdout);
+    assert!(stdout.contains("sync-check: drift detected"));
+    assert!(stdout.contains("entities_changed="));
+    assert_eq!(read(repo.join("agentmesh.lock")), lockfile_before);
+    assert_eq!(
+        read(repo.join(".ai/commands/review.md")),
+        canonical_command_before
+    );
+}
+
+#[test]
+fn sync_does_not_emit_deferred_or_read_only_v02_paths() {
+    let temp = match tempfile::tempdir() {
+        Ok(temp) => temp,
+        Err(error) => panic!("tempdir should be available: {error}"),
+    };
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    write(repo.join("GEMINI.md"), "# Gemini\n");
+    write(repo.join(".github/copilot-instructions.md"), "# Copilot\n");
+    write(
+        repo.join(".cursor/rules/security.mdc"),
+        "---\ndescription: Security\nalwaysApply: true\n---\nCursor security.\n",
+    );
+    write(repo.join(".codex/config.toml"), "[hooks]\n");
+    write(repo.join(".codex/rules/strict.rules"), "strict\n");
+    write(repo.join(".codex/prompts/release.md"), "Release prompt\n");
+    write(repo.join(".codex/commands/review.md"), "Review command\n");
+    write(repo.join(".github/hooks/pre-tool.json"), "{}\n");
+    write(
+        repo.join(".github/workflows/copilot-setup-steps.yml"),
+        "steps: []\n",
+    );
+    write(
+        repo.join(".cursor/skills/repo-audit/SKILL.md"),
+        "# Deferred Cursor skill\n",
+    );
+    write(
+        repo.join(".gemini/settings.json"),
+        r#"{"mcpServers":{"repo":{"command":"repo"}},"policyPaths":[".gemini/policies"]}"#,
+    );
+    write(
+        repo.join(".gemini/agents/investigator.md"),
+        "# Deferred agent\n",
+    );
+    write(repo.join("gemini-extension.json"), "{}\n");
+    write(
+        repo.join(".ai/hooks/project.json"),
+        r#"{"name":"project","command":"agentmesh"}"#,
+    );
+    write(
+        repo.join(".ai/mcp-bindings/project.json"),
+        r#"{"name":"project","command":"repo"}"#,
+    );
+    write(
+        repo.join(".ai/permission-policies/project.json"),
+        r#"{"name":"project","allow":["read"]}"#,
+    );
+
+    assert_success(&run_agentmesh(
+        &repo,
+        &cache,
+        &["--silent", "sync", "--await-drain"],
+    ));
+
+    for path in [
+        ".cursor/hooks.json",
+        ".cursor/mcp.json",
+        ".cursor/commands",
+        ".cursor/agents",
+        ".gemini/hooks",
+        ".gemini/extensions",
+    ] {
+        assert!(
+            !repo.join(path).exists(),
+            "deferred or read-only path should not be emitted: {path}"
+        );
+    }
+    let lockfile = read(repo.join("agentmesh.lock"));
+    for path in [
+        ".codex/rules/strict.rules",
+        ".codex/prompts/release.md",
+        ".codex/commands/review.md",
+        ".github/hooks/pre-tool.json",
+        ".github/workflows/copilot-setup-steps.yml",
+        ".cursor/skills/repo-audit/SKILL.md",
+        ".gemini/settings.json",
+        ".gemini/agents/investigator.md",
+        "gemini-extension.json",
+    ] {
+        assert!(
+            !lockfile.contains(path),
+            "read-only or deferred path should not be tracked in lockfile: {path}"
+        );
+    }
 }
 
 #[test]

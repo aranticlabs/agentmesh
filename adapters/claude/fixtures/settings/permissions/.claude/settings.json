@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": ["Bash(git status:*)"],
+    "deny": ["Bash(rm -rf:*)"]
+  },
+  "theme": "dark"
+}

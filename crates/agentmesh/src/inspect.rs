@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agentmesh_adapter_sdk_rust::Adapter;
-use agentmesh_protocol::ImportRequest;
+use agentmesh_protocol::{ImportRequest, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -77,6 +77,7 @@ pub(crate) struct RuntimeSnapshot {
     pub(crate) entities: Vec<String>,
     pub(crate) import_error: Option<String>,
     pub(crate) hook_overlay: PathBuf,
+    pub(crate) hook_supported: bool,
     pub(crate) hook_installed: bool,
     pub(crate) hook_note: Option<String>,
 }
@@ -94,6 +95,17 @@ pub(crate) struct ReviewedDiffSummary {
     pub(crate) entities_changed: usize,
     pub(crate) pending_conflicts: usize,
     pub(crate) capability_skipped: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) capability_skips: Vec<ReviewedCapabilitySkip>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewedCapabilitySkip {
+    pub(crate) runtime: String,
+    pub(crate) entity_id: String,
+    pub(crate) entity_type: String,
+    pub(crate) fallback: String,
+    pub(crate) locations: Vec<String>,
 }
 
 impl From<&agentmesh_core::SyncSummary> for ReviewedDiffSummary {
@@ -103,7 +115,31 @@ impl From<&agentmesh_core::SyncSummary> for ReviewedDiffSummary {
             entities_changed: summary.entities_changed,
             pending_conflicts: summary.pending_conflicts,
             capability_skipped: summary.capability_skipped,
+            capability_skips: summary
+                .capability_skips
+                .iter()
+                .map(|finding| ReviewedCapabilitySkip {
+                    runtime: finding.runtime.as_str().to_string(),
+                    entity_id: finding.entity_id.as_str().to_string(),
+                    entity_type: finding.entity_type.as_str().to_string(),
+                    fallback: capability_fallback_name(finding.fallback).to_string(),
+                    locations: finding
+                        .locations
+                        .iter()
+                        .map(|(location, path)| format!("{}:{}", location.as_str(), path.display()))
+                        .collect(),
+                })
+                .collect(),
         }
+    }
+}
+
+fn capability_fallback_name(fallback: agentmesh_core::config::CapabilityFallback) -> &'static str {
+    match fallback {
+        agentmesh_core::config::CapabilityFallback::Skip => "skip",
+        agentmesh_core::config::CapabilityFallback::Warn => "warn",
+        agentmesh_core::config::CapabilityFallback::RenderAsDoc => "render-as-doc",
+        agentmesh_core::config::CapabilityFallback::Fail => "fail",
     }
 }
 
@@ -151,6 +187,9 @@ fn inspect_repo_with_options(
     let runtimes = vec![
         inspect_claude(context, options.import_entities)?,
         inspect_codex(context, options.import_entities)?,
+        inspect_copilot(context, options.import_entities)?,
+        inspect_cursor(context, options.import_entities)?,
+        inspect_gemini(context, options.import_entities)?,
     ];
     let hook_ownership = inspect_hook_ownership(context, &cache, &runtimes)?;
     let (core_findings, core_health) = if options.include_core_findings {
@@ -203,7 +242,19 @@ pub(crate) fn inspect_unknown_runtime_dirs(repo_root: &Path) -> Result<Vec<PathB
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !name.starts_with('.') || matches!(name, ".ai" | ".claude" | ".codex" | ".git") {
+        if !name.starts_with('.')
+            || matches!(
+                name,
+                ".ai"
+                    | ".agents"
+                    | ".claude"
+                    | ".codex"
+                    | ".cursor"
+                    | ".gemini"
+                    | ".github"
+                    | ".git"
+            )
+        {
             continue;
         }
         if path.join("skills").is_dir()
@@ -514,6 +565,51 @@ fn inspect_codex(context: &CliContext, import_entities: bool) -> Result<RuntimeS
     Ok(runtime)
 }
 
+fn inspect_cursor(context: &CliContext, import_entities: bool) -> Result<RuntimeSnapshot> {
+    let mut runtime = inspect_runtime(
+        context,
+        "cursor",
+        ".cursor",
+        ".cursor/hooks.json",
+        "__agentmesh-cursor-hook-not-supported__",
+        import_entities,
+        agentmesh_adapter_cursor::CursorAdapter,
+    )?;
+    runtime.hook_supported = false;
+    runtime.hook_installed = false;
+    Ok(runtime)
+}
+
+fn inspect_copilot(context: &CliContext, import_entities: bool) -> Result<RuntimeSnapshot> {
+    let mut runtime = inspect_runtime(
+        context,
+        "copilot",
+        ".github",
+        ".github/hooks",
+        "__agentmesh-copilot-hook-not-supported__",
+        import_entities,
+        agentmesh_adapter_copilot::CopilotAdapter,
+    )?;
+    runtime.hook_supported = false;
+    runtime.hook_installed = false;
+    Ok(runtime)
+}
+
+fn inspect_gemini(context: &CliContext, import_entities: bool) -> Result<RuntimeSnapshot> {
+    let mut runtime = inspect_runtime(
+        context,
+        "gemini",
+        ".gemini",
+        ".gemini/hooks",
+        "__agentmesh-gemini-hook-not-supported__",
+        import_entities,
+        agentmesh_adapter_gemini::GeminiAdapter,
+    )?;
+    runtime.hook_supported = false;
+    runtime.hook_installed = false;
+    Ok(runtime)
+}
+
 fn inspect_runtime<A>(
     context: &CliContext,
     name: &'static str,
@@ -526,10 +622,24 @@ fn inspect_runtime<A>(
 where
     A: Adapter,
 {
-    let detected = adapter
-        .detect(&context.repo_root)
-        .map_err(|error| CliError::new(error.to_string(), AgentmeshExitCode::Adapter))?;
     let runtime_dir = context.repo_root.join(runtime_dir_name);
+    let overlay_path = PathBuf::from(overlay);
+    let detected = match adapter.detect(&context.repo_root) {
+        Ok(detected) => detected,
+        Err(error) => {
+            return Ok(RuntimeSnapshot {
+                name,
+                present: false,
+                evidence: Vec::new(),
+                entities: Vec::new(),
+                import_error: Some(format!("detect failed: {error}")),
+                hook_overlay: overlay_path,
+                hook_supported: true,
+                hook_installed: false,
+                hook_note: None,
+            });
+        }
+    };
     let mut entities = Vec::new();
     let mut import_error = None;
 
@@ -552,7 +662,6 @@ where
         }
     }
 
-    let overlay_path = PathBuf::from(overlay);
     let hook_installed = fs::read_to_string(context.repo_root.join(&overlay_path))
         .map(|content| content.contains(hook_trigger))
         .unwrap_or(false);
@@ -564,6 +673,7 @@ where
         entities,
         import_error,
         hook_overlay: overlay_path,
+        hook_supported: true,
         hook_installed,
         hook_note: None,
     })
@@ -670,6 +780,7 @@ fn runtime_json(runtime: &RuntimeSnapshot) -> serde_json::Value {
         "entities": runtime.entities,
         "import_error": runtime.import_error,
         "hook_overlay": runtime.hook_overlay,
+        "hook_supported": runtime.hook_supported,
         "hook_installed": runtime.hook_installed,
         "hook_note": runtime.hook_note,
     })
@@ -705,6 +816,7 @@ pub(crate) fn print_status(_context: &CliContext, snapshot: &RepoSnapshot) {
         snapshot
             .runtimes
             .iter()
+            .filter(|runtime| runtime.hook_supported)
             .map(|runtime| format!(
                 "{} {}",
                 runtime.name,
@@ -730,7 +842,11 @@ pub(crate) fn print_status(_context: &CliContext, snapshot: &RepoSnapshot) {
                 "    {:<7} present={} hook={} entities={}",
                 runtime.name,
                 runtime.present,
-                runtime.hook_installed,
+                if runtime.hook_supported {
+                    runtime.hook_installed.to_string()
+                } else {
+                    "unsupported".to_string()
+                },
                 runtime.entities.len()
             );
             if _context.debug() && !runtime.evidence.is_empty() {
@@ -804,8 +920,11 @@ pub(crate) fn print_doctor(context: &CliContext, snapshot: &RepoSnapshot) {
             format!("{} not detected", check(context, false))
         };
         println!(
-            "  {:<7} {}   bundled, protocol 1, entities [instructions, skill, subagent]",
-            runtime.name, state
+            "  {:<7} {}   bundled, protocol {}, entities [{}]",
+            runtime.name,
+            state,
+            PROTOCOL_VERSION,
+            bundled_adapter_entities(runtime.name)
         );
     }
     for runtime in &snapshot.unknown_runtimes {
@@ -819,7 +938,11 @@ pub(crate) fn print_doctor(context: &CliContext, snapshot: &RepoSnapshot) {
     print_integrity(snapshot);
     println!();
     println!("Hook entries:");
-    for runtime in &snapshot.runtimes {
+    for runtime in snapshot
+        .runtimes
+        .iter()
+        .filter(|runtime| runtime.hook_supported)
+    {
         println!(
             "  {:<7} {} pinned-absolute   ({})",
             runtime.name,
@@ -885,7 +1008,7 @@ pub(crate) fn print_doctor(context: &CliContext, snapshot: &RepoSnapshot) {
 
 pub(crate) fn print_versions(snapshot: &RepoSnapshot) {
     println!("AgentMesh:          {}", agentmesh_core::VERSION);
-    println!("Protocol versions:  supported [1]");
+    println!("Protocol versions:  supported [{PROTOCOL_VERSION}]");
     println!(
         "Lockfile schema:    {}",
         snapshot
@@ -896,8 +1019,42 @@ pub(crate) fn print_versions(snapshot: &RepoSnapshot) {
     );
     println!();
     println!("Built-in adapters:");
-    println!("  claude    bundled   protocol [1]   entities [instructions, skill, subagent]");
-    println!("  codex     bundled   protocol [1]   entities [instructions, skill, subagent]");
+    println!(
+        "  claude    bundled   protocol [{PROTOCOL_VERSION}]   entities [{}]",
+        bundled_adapter_entities("claude")
+    );
+    println!(
+        "  codex     bundled   protocol [{PROTOCOL_VERSION}]   entities [{}]",
+        bundled_adapter_entities("codex")
+    );
+    println!(
+        "  copilot   bundled   protocol [{PROTOCOL_VERSION}]   entities [{}]",
+        bundled_adapter_entities("copilot")
+    );
+    println!(
+        "  cursor    bundled   protocol [{PROTOCOL_VERSION}]   entities [{}]",
+        bundled_adapter_entities("cursor")
+    );
+    println!(
+        "  gemini    bundled   protocol [{PROTOCOL_VERSION}]   entities [{}]",
+        bundled_adapter_entities("gemini")
+    );
+}
+
+fn bundled_adapter_entities(runtime: &str) -> String {
+    let entities = match runtime {
+        "claude" => agentmesh_adapter_claude::metadata().supported_entities,
+        "codex" => agentmesh_adapter_codex::metadata().supported_entities,
+        "copilot" => agentmesh_adapter_copilot::metadata().supported_entities,
+        "cursor" => agentmesh_adapter_cursor::metadata().supported_entities,
+        "gemini" => agentmesh_adapter_gemini::metadata().supported_entities,
+        _ => &[],
+    };
+    entities
+        .iter()
+        .map(|entity| entity.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(crate) fn print_integrity(snapshot: &RepoSnapshot) {

@@ -1,0 +1,23 @@
+[[fixture]]
+name = "inline-config-hooks"
+surface = "codex.inline-config-hooks"
+cases = ["read_only_diagnostic", "doctor"]
+source_url = "https://developers.openai.com/codex/hooks"
+source_checked_on = "2026-07-05"
+support_level = "read_only"
+canonical_entity_type = "hook"
+fixture_file_path = "inline-hooks/.codex/config.toml"
+expected_canonical_id = "hook:codex-inline-config"
+expected_diagnostics = ["Codex inline config hooks are read-only diagnostics"]
+
+[[fixture]]
+name = "experimental-rules"
+surface = "codex.experimental-rules"
+cases = ["read_only_diagnostic", "doctor"]
+source_url = "https://developers.openai.com/codex/config-reference"
+source_checked_on = "2026-07-05"
+support_level = "read_only"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "rules/.codex/rules/strict.rules"
+expected_canonical_id = "permission-policy:strict"
+expected_diagnostics = ["Codex experimental rules are read-only diagnostics"]

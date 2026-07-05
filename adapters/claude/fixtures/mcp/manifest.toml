@@ -1,0 +1,24 @@
+[[fixture]]
+name = "project-mcp"
+surface = "claude.project-mcp"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/mcp"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "project/.mcp.json"
+expected_canonical_id = "mcp-binding:project"
+expected_emitted_path = ".mcp.json"
+expected_diagnostics = []
+
+[[fixture]]
+name = "invalid-project-mcp"
+surface = "claude.project-mcp"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.anthropic.com/en/docs/claude-code/mcp"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "invalid/.mcp.json"
+expected_canonical_id = "mcp-binding:project"
+expected_diagnostics = ["failed to parse hook overlay JSON"]

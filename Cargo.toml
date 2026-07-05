@@ -3,6 +3,9 @@ resolver = "3"
 members = [
   "adapters/claude",
   "adapters/codex",
+  "adapters/copilot",
+  "adapters/cursor",
+  "adapters/gemini",
   "crates/agentmesh-adapter-sdk-rust",
   "crates/agentmesh",
   "crates/agentmesh-core",
@@ -22,6 +25,9 @@ homepage = "https://agentmesh.sh"
 [workspace.dependencies]
 agentmesh-adapter-claude = { path = "adapters/claude", version = "0.1.2" }
 agentmesh-adapter-codex = { path = "adapters/codex", version = "0.1.2" }
+agentmesh-adapter-copilot = { path = "adapters/copilot", version = "0.1.2" }
+agentmesh-adapter-cursor = { path = "adapters/cursor", version = "0.1.2" }
+agentmesh-adapter-gemini = { path = "adapters/gemini", version = "0.1.2" }
 agentmesh-adapter-sdk-rust = { path = "crates/agentmesh-adapter-sdk-rust", version = "0.1.2" }
 agentmesh-core = { path = "crates/agentmesh-core", version = "0.1.2" }
 agentmesh-protocol = { path = "crates/agentmesh-protocol", version = "0.1.2" }

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "repo-tools": {
+      "command": "repo-tools",
+      "args": ["serve"],
+      "trust": false
+    }
+  },
+  "mcp": {
+    "allowed": ["repo-tools"],
+    "excluded": ["experimental"]
+  }
+}

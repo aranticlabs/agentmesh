@@ -1,0 +1,11 @@
+---
+description: Preserve Cursor metadata
+alwaysApply: false
+cursorPriority: high
+owner: platform
+---
+
+# Preserve Metadata
+
+When this file is imported and emitted back to Cursor, unknown frontmatter stays
+attached to the Cursor-originated entity.

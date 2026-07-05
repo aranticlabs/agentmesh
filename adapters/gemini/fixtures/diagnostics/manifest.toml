@@ -1,0 +1,71 @@
+[[fixture]]
+name = "project-mcp-settings"
+surface = "gemini.project-mcp-settings"
+cases = ["read_only_diagnostic", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md"
+source_checked_on = "2026-07-05"
+support_level = "read_only"
+canonical_entity_type = "mcp_binding"
+fixture_file_path = "settings/mcp/.gemini/settings.json"
+expected_canonical_id = "mcp-binding:gemini-project"
+expected_diagnostics = ["project MCP settings are diagnostics-only"]
+
+[[fixture]]
+name = "project-policy-settings"
+surface = "gemini.policy-settings"
+cases = ["read_only_diagnostic", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/policy-engine.md"
+source_checked_on = "2026-07-05"
+support_level = "read_only"
+canonical_entity_type = "permission_policy"
+fixture_file_path = "settings/policy/.gemini/settings.json"
+expected_canonical_id = "permission-policy:gemini-project"
+expected_diagnostics = ["project policy settings are diagnostics-only"]
+
+[[fixture]]
+name = "custom-context-filename"
+surface = "gemini.custom-context-filenames"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "instructions:root"
+fixture_file_path = "settings/context/.gemini/settings.json"
+expected_canonical_id = "instructions:root"
+expected_diagnostics = ["custom context filenames are detected but only GEMINI.md is emitted"]
+
+[[fixture]]
+name = "gemini-subagent-detection"
+surface = "gemini.subagents"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "subagent"
+fixture_file_path = "deferred/subagents/.gemini/agents/investigator.md"
+expected_canonical_id = "subagent:gemini-investigator"
+expected_diagnostics = ["Gemini subagents are deferred and must never be emitted"]
+
+[[fixture]]
+name = "gemini-hook-detection"
+surface = "gemini.hooks"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/writing-hooks.md"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "hook"
+fixture_file_path = "deferred/hooks/.gemini/settings.json"
+expected_canonical_id = "hook:gemini-project"
+expected_diagnostics = ["Gemini hooks are deferred and must never be emitted"]
+
+[[fixture]]
+name = "gemini-extension-detection"
+surface = "gemini.extensions"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/writing-extensions.md"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "command"
+fixture_file_path = "deferred/extensions/gemini-extension.json"
+expected_canonical_id = "command:gemini-extension"
+expected_diagnostics = ["Gemini extensions are deferred and must never be emitted"]

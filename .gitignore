@@ -54,6 +54,16 @@ coverage/
 .claude/
 .codex/
 .cursor/
+!adapters/claude/fixtures/**/.claude/
+!adapters/claude/fixtures/**/.claude/**
+!adapters/claude/fixtures/**/CLAUDE.md
+!adapters/codex/fixtures/**/.codex/
+!adapters/codex/fixtures/**/.codex/**
+!adapters/codex/fixtures/**/AGENTS.md
+!adapters/cursor/fixtures/**/.cursor/
+!adapters/cursor/fixtures/**/.cursor/**
 CLAUDE.md
 AGENTS.md
+!adapters/claude/fixtures/**/CLAUDE.md
+!adapters/codex/fixtures/**/AGENTS.md
 agentmesh.lock

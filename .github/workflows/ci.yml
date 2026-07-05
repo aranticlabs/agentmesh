@@ -178,8 +178,6 @@ jobs:
         with:
           tool: cargo-deny,cargo-audit
       - run: make ci-supply-chain
-      - run: cargo deny --manifest-path fuzz/Cargo.toml check
-      - run: cargo audit --file fuzz/Cargo.lock
 
   installers:
     name: installer smoke

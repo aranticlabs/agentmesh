@@ -1,0 +1,23 @@
+[[fixture]]
+name = "custom-prompt"
+surface = "codex.custom-prompts"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://developers.openai.com/codex/custom-prompts"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "prompt"
+fixture_file_path = "prompts/.codex/prompts/release.md"
+expected_canonical_id = "prompt:codex-release"
+expected_diagnostics = ["Codex custom prompts are deferred for project sync"]
+
+[[fixture]]
+name = "project-command"
+surface = "codex.project-commands"
+cases = ["deferred_detection", "doctor"]
+source_url = "https://developers.openai.com/codex/custom-prompts"
+source_checked_on = "2026-07-05"
+support_level = "deferred"
+canonical_entity_type = "command"
+fixture_file_path = "commands/.codex/commands/review.md"
+expected_canonical_id = "command:codex-review"
+expected_diagnostics = ["Codex project commands are deferred for project sync"]

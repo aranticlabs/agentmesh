@@ -50,6 +50,7 @@ fn sample_lockfile(entity_count: usize) -> Lockfile {
             id,
             LockfileEntity {
                 entity_type: EntityType::Skill,
+                entity_schema: agentmesh_core::lockfile::entity_schema_for_type(EntityType::Skill),
                 scope: None,
                 locations: BTreeMap::from([
                     (

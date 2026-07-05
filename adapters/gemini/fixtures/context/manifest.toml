@@ -1,0 +1,27 @@
+[[fixture]]
+name = "root-context"
+surface = "gemini.root-context"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:root"
+fixture_file_path = "root/GEMINI.md"
+expected_canonical_id = "instructions:root"
+expected_emitted_path = "GEMINI.md"
+expected_diagnostics = []
+expected_behaviors = ["plain Markdown context files have no native metadata syntax to reject"]
+
+[[fixture]]
+name = "nested-context"
+surface = "gemini.nested-context"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "nested/packages/api/GEMINI.md"
+expected_canonical_id = "instructions:scoped:packages-api"
+expected_emitted_path = "packages/api/GEMINI.md"
+expected_diagnostics = []
+expected_behaviors = ["nested plain Markdown context files derive scope from path and have no native metadata syntax to reject"]

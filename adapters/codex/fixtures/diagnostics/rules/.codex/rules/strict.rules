@@ -1,0 +1,2 @@
+deny = ["network"]
+allow = ["read"]

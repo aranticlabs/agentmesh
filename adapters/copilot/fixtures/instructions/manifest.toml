@@ -1,0 +1,38 @@
+[[fixture]]
+name = "repository-instructions"
+surface = "copilot.repository-instructions"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "invalid_syntax_not_applicable", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:root"
+fixture_file_path = "root/.github/copilot-instructions.md"
+expected_canonical_id = "instructions:root"
+expected_emitted_path = ".github/copilot-instructions.md"
+expected_diagnostics = []
+expected_behaviors = ["plain Markdown repository instructions have no native metadata syntax to reject"]
+
+[[fixture]]
+name = "path-specific-instructions"
+surface = "copilot.path-specific-instructions"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://docs.github.com/en/copilot/reference/customization-cheat-sheet"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "scoped/.github/instructions/api-review.instructions.md"
+expected_canonical_id = "instructions:scoped:api-review"
+expected_emitted_path = ".github/instructions/api-review.instructions.md"
+expected_diagnostics = []
+
+[[fixture]]
+name = "path-specific-instructions-missing-applyto"
+surface = "copilot.path-specific-instructions"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://docs.github.com/en/copilot/reference/customization-cheat-sheet"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "instructions:scoped"
+fixture_file_path = "invalid/.github/instructions/missing-applyto.instructions.md"
+expected_canonical_id = "instructions:scoped:missing-applyto"
+expected_diagnostics = ["missing applyTo frontmatter"]

@@ -1,0 +1,58 @@
+[[fixture]]
+name = "workspace-skill"
+surface = "gemini.skill"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/using-agent-skills.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "native/.gemini/skills/release-check/SKILL.md"
+fixture_root_path = "native/.gemini/skills/release-check"
+expected_canonical_id = "skill:release-check"
+expected_emitted_path = ".gemini/skills/release-check/SKILL.md"
+expected_files = ["SKILL.md", "references/checks.md"]
+expected_diagnostics = []
+
+[[fixture]]
+name = "shared-agent-skill"
+surface = "gemini.shared-skill"
+cases = ["minimum_valid", "all_supported_metadata", "unknown_metadata", "round_trip", "sync_check", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/using-agent-skills.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "shared/.agents/skills/shared-analysis/SKILL.md"
+fixture_root_path = "shared/.agents/skills/shared-analysis"
+expected_canonical_id = "skill:shared-analysis"
+expected_emitted_path = ".gemini/skills/shared-analysis/SKILL.md"
+expected_files = ["SKILL.md", "references/notes.md"]
+expected_diagnostics = []
+expected_behaviors = ["shared skill path imports only when Gemini has write-enabled runtime evidence"]
+
+[[fixture]]
+name = "workspace-skill-invalid-frontmatter"
+surface = "gemini.skill"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/using-agent-skills.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "invalid/.gemini/skills/broken/SKILL.md"
+fixture_root_path = "invalid/.gemini/skills/broken"
+expected_canonical_id = "skill:broken"
+expected_files = ["SKILL.md"]
+expected_diagnostics = ["invalid Gemini skill frontmatter must not be overwritten"]
+
+[[fixture]]
+name = "shared-agent-skill-invalid-frontmatter"
+surface = "gemini.shared-skill"
+cases = ["invalid_syntax", "doctor"]
+source_url = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/using-agent-skills.md"
+source_checked_on = "2026-07-05"
+support_level = "write_enabled"
+canonical_entity_type = "skill"
+fixture_file_path = "invalid-shared/.agents/skills/gemini-broken-shared/SKILL.md"
+fixture_root_path = "invalid-shared/.agents/skills/gemini-broken-shared"
+expected_canonical_id = "skill:gemini-broken-shared"
+expected_files = ["SKILL.md"]
+expected_diagnostics = ["invalid shared Gemini skill frontmatter must not be overwritten"]

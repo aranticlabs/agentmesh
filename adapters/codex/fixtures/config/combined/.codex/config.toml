@@ -1,0 +1,11 @@
+model = "gpt-5"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[mcp_servers.filesystem]
+command = "node"
+args = ["server.js"]
+
+[profiles.locked-down]
+approval_policy = "never"
+sandbox_mode = "read-only"

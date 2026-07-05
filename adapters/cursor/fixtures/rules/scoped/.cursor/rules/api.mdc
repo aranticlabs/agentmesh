@@ -1,0 +1,9 @@
+---
+description: API implementation guidance
+globs:
+  - "crates/**/src/**/*.rs"
+---
+
+# API Guidance
+
+Keep command parsing thin and move domain behavior into library crates.
