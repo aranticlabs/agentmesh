@@ -4328,6 +4328,7 @@ schema: 2
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn contains_display_path(value: &str, relative_path: &str) -> bool {
         value.contains(relative_path) || value.contains(&relative_path.replace('/', "\\"))
     }
