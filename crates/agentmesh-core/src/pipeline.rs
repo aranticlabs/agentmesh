@@ -2448,21 +2448,12 @@ fn canonicalize_codex_toml_subagent(contents: &str, relative_path: &Path) -> Res
 }
 
 fn split_canonical_markdown(contents: &str) -> Result<(serde_norway::Mapping, String)> {
-    let Some(rest) = contents.strip_prefix("---\n") else {
-        return Ok((serde_norway::Mapping::new(), contents.to_string()));
-    };
-    let Some(end) = rest.find("\n---\n") else {
-        return Ok((serde_norway::Mapping::new(), contents.to_string()));
-    };
-    let frontmatter = &rest[..end];
-    let body = rest[end + "\n---\n".len()..].to_string();
-    let mapping = crate::merge::parse_frontmatter_mapping(frontmatter).map_err(|source| {
-        PipelineError::EntityFormat {
+    let parts =
+        crate::merge::split_markdown(contents).map_err(|source| PipelineError::EntityFormat {
             path: PathBuf::from("<canonical>"),
             message: source.to_string(),
-        }
-    })?;
-    Ok((mapping, body))
+        })?;
+    Ok((parts.frontmatter, parts.body))
 }
 
 fn choose_canonical_view(views: &BTreeMap<LocationKey, EntityView>) -> Option<&EntityView> {
