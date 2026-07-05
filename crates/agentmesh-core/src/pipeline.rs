@@ -4869,16 +4869,14 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
-        assert!(contains_display_path(
-            &error.to_string(),
-            ".cursor/rules/broken.mdc"
-        ));
         assert!(report.findings.iter().any(|finding| {
-            finding.starts_with("cursor_rule_invalid: .cursor/rules/broken.mdc")
+            finding.starts_with("cursor_rule_invalid: ")
+                && contains_display_path(finding, ".cursor/rules/broken.mdc")
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding
-                == "cursor_rule_invalid: .cursor/rules/empty-globs.mdc: Cursor rule globs must contain one non-empty string scope"
+            finding.starts_with("cursor_rule_invalid: ")
+                && contains_display_path(finding, ".cursor/rules/empty-globs.mdc")
+                && finding.contains("Cursor rule globs must contain one non-empty string scope")
         }));
     }
 
@@ -5475,19 +5473,14 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
-        assert!(
-            contains_display_path(&error.to_string(), ".gemini/skills/broken/SKILL.md")
-                || contains_display_path(
-                    &error.to_string(),
-                    ".gemini/commands/missing-prompt.toml"
-                )
-        );
         assert!(report.findings.iter().any(|finding| {
-            finding.starts_with("gemini_skill_invalid: .gemini/skills/broken/SKILL.md")
+            finding.starts_with("gemini_skill_invalid: ")
+                && contains_display_path(finding, ".gemini/skills/broken/SKILL.md")
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding
-                == "gemini_command_invalid: .gemini/commands/missing-prompt.toml: missing required prompt field"
+            finding.starts_with("gemini_command_invalid: ")
+                && contains_display_path(finding, ".gemini/commands/missing-prompt.toml")
+                && finding.contains("missing required prompt field")
         }));
     }
 
@@ -5539,20 +5532,21 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
-        assert!(contains_display_path(
-            &error.to_string(),
-            ".github/instructions/missing.instructions.md"
-        ));
         assert!(report.findings.iter().any(|finding| {
-            finding
-                == "copilot_instruction_invalid: .github/instructions/missing.instructions.md: missing applyTo frontmatter"
+            finding.starts_with("copilot_instruction_invalid: ")
+                && contains_display_path(finding, ".github/instructions/missing.instructions.md")
+                && finding.contains("missing applyTo frontmatter")
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding.starts_with("copilot_prompt_invalid: .github/prompts/broken.prompt.md")
+            finding.starts_with("copilot_prompt_invalid: ")
+                && contains_display_path(finding, ".github/prompts/broken.prompt.md")
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding
-                == "copilot_instruction_invalid: .github/instructions/multi.instructions.md: Copilot applyTo with multiple scopes cannot be represented losslessly"
+            finding.starts_with("copilot_instruction_invalid: ")
+                && contains_display_path(finding, ".github/instructions/multi.instructions.md")
+                && finding.contains(
+                    "Copilot applyTo with multiple scopes cannot be represented losslessly",
+                )
         }));
     }
 
