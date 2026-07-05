@@ -1083,7 +1083,7 @@ fn merge_codex_hooks_value(existing: Option<JsonValue>, replacement: JsonValue) 
 fn merge_codex_hook_entries(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
     match (existing, replacement) {
         (Some(JsonValue::Array(mut existing)), JsonValue::Array(replacement)) => {
-            existing.retain(|value| !json_contains_codex_hook(value));
+            existing.retain(|value| !json_contains_agentmesh_codex_hook(value));
             JsonValue::Array(merge_json_arrays(existing, replacement))
         }
         (_, replacement) => replacement,
@@ -1092,7 +1092,7 @@ fn merge_codex_hook_entries(existing: Option<JsonValue>, replacement: JsonValue)
 
 fn remove_codex_hook_entries_at_key(object: &mut serde_json::Map<String, JsonValue>, key: &str) {
     if let Some(JsonValue::Array(entries)) = object.get_mut(key) {
-        entries.retain(|value| !json_contains_codex_hook(value));
+        entries.retain(|value| !json_contains_agentmesh_codex_hook(value));
     }
     if object
         .get(key)
@@ -1102,13 +1102,18 @@ fn remove_codex_hook_entries_at_key(object: &mut serde_json::Map<String, JsonVal
     }
 }
 
-fn json_contains_codex_hook(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::String(value) => value.contains("codex-hook"),
-        JsonValue::Array(values) => values.iter().any(json_contains_codex_hook),
-        JsonValue::Object(values) => values.values().any(json_contains_codex_hook),
-        _ => false,
-    }
+fn json_contains_agentmesh_codex_hook(value: &JsonValue) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let Some(hooks) = object.get("hooks").and_then(JsonValue::as_array) else {
+        return false;
+    };
+    hooks.iter().any(|hook| {
+        hook.get("command")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|command| command.contains("agentmesh") && command.contains("codex-hook"))
+    })
 }
 
 fn merge_json_section_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
@@ -2508,6 +2513,45 @@ sandbox_mode = "read-only"
         assert!(hooks.contains("/new/agentmesh"));
         assert!(hooks.contains("echo user"));
         assert_eq!(hooks.matches("codex-hook").count(), 1);
+    }
+
+    #[test]
+    fn emits_codex_hook_preserves_third_party_codex_hook_mentions() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".codex/hooks.json"),
+            r#"{"hooks":{"PostToolUse":[{"matcher":"codex-hook","hooks":[{"type":"command","command":"echo user","statusMessage":"mentions codex-hook"}]},{"matcher":"Edit","hooks":[{"type":"command","command":"/old/agentmesh sync --trigger=codex-hook --silent"}]}]}}"#,
+        );
+        let adapter = CodexAdapter;
+
+        adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".codex"),
+                mode: RuntimeMode::Managed,
+                entities: vec![EmitEntity {
+                    id: "hook:codex-project".to_string(),
+                    entity_type: agentmesh_protocol::EntityType::Hook,
+                    scope: None,
+                    source_path: None,
+                    files: BTreeMap::from([(
+                        PathBuf::from("codex-project.json"),
+                        file(r#"{"hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"/new/agentmesh sync --trigger=codex-hook --silent"}]}]}}"#),
+                    )]),
+                    frontmatter: BTreeMap::new(),
+                    overrides: BTreeMap::new(),
+                }],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        let hooks = read(root.join(".codex/hooks.json"));
+        assert!(hooks.contains("echo user"));
+        assert!(hooks.contains("mentions codex-hook"));
+        assert!(!hooks.contains("/old/agentmesh"));
+        assert!(hooks.contains("/new/agentmesh"));
     }
 
     proptest! {

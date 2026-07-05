@@ -4328,6 +4328,10 @@ schema: 2
         }
     }
 
+    fn display_path(relative_path: &str) -> String {
+        Path::new(relative_path).display().to_string()
+    }
+
     #[test]
     fn init_style_sync_imports_and_emits_skills() {
         let temp = match tempfile::tempdir() {
@@ -4865,7 +4869,8 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
-        assert!(error.to_string().contains(".cursor/rules/broken.mdc"));
+        let broken_rule = display_path(".cursor/rules/broken.mdc");
+        assert!(error.to_string().contains(&broken_rule));
         assert!(report.findings.iter().any(|finding| {
             finding.starts_with("cursor_rule_invalid: .cursor/rules/broken.mdc")
         }));
@@ -5468,11 +5473,11 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
+        let broken_skill = display_path(".gemini/skills/broken/SKILL.md");
+        let missing_prompt = display_path(".gemini/commands/missing-prompt.toml");
         assert!(
-            error.to_string().contains(".gemini/skills/broken/SKILL.md")
-                || error
-                    .to_string()
-                    .contains(".gemini/commands/missing-prompt.toml")
+            error.to_string().contains(&broken_skill)
+                || error.to_string().contains(&missing_prompt)
         );
         assert!(report.findings.iter().any(|finding| {
             finding.starts_with("gemini_skill_invalid: .gemini/skills/broken/SKILL.md")
@@ -5531,11 +5536,8 @@ schema: 2
         };
 
         assert!(matches!(error, PipelineError::EntityFormat { .. }));
-        assert!(
-            error
-                .to_string()
-                .contains(".github/instructions/missing.instructions.md")
-        );
+        let missing_instruction = display_path(".github/instructions/missing.instructions.md");
+        assert!(error.to_string().contains(&missing_instruction));
         assert!(report.findings.iter().any(|finding| {
             finding
                 == "copilot_instruction_invalid: .github/instructions/missing.instructions.md: missing applyTo frontmatter"
