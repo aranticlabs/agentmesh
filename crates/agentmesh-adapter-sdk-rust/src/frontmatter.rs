@@ -17,13 +17,16 @@ pub struct FrontmatterDocument {
 
 /// Splits Markdown into YAML frontmatter and body content.
 pub fn parse_frontmatter(markdown: &str) -> Result<FrontmatterDocument> {
-    let Some(rest) = markdown.strip_prefix("---\n") else {
+    let Some(rest) = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))
+    else {
         return Ok(FrontmatterDocument {
             frontmatter: Mapping::new(),
             body: markdown.to_string(),
         });
     };
-    let Some(end) = rest.find("\n---\n") else {
+    let Some((end, delimiter_len)) = frontmatter_closing_delimiter(rest) else {
         return Ok(FrontmatterDocument {
             frontmatter: Mapping::new(),
             body: markdown.to_string(),
@@ -31,11 +34,22 @@ pub fn parse_frontmatter(markdown: &str) -> Result<FrontmatterDocument> {
     };
 
     let frontmatter = &rest[..end];
-    let body = &rest[end + "\n---\n".len()..];
+    let body = &rest[end + delimiter_len..];
     Ok(FrontmatterDocument {
         frontmatter: parse_frontmatter_mapping(frontmatter)?,
         body: body.to_string(),
     })
+}
+
+fn frontmatter_closing_delimiter(markdown: &str) -> Option<(usize, usize)> {
+    ["\n---\n", "\n---\r\n", "\r\n---\n", "\r\n---\r\n"]
+        .iter()
+        .filter_map(|delimiter| {
+            markdown
+                .find(delimiter)
+                .map(|index| (index, delimiter.len()))
+        })
+        .min_by_key(|(index, _)| *index)
 }
 
 /// Serializes Markdown with stable frontmatter key ordering.

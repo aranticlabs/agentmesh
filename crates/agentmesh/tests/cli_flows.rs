@@ -727,7 +727,7 @@ fn init_projects_all_entities_and_installs_detected_runtime_hooks() {
     let cache = temp.path().join("cache");
     fixture_repo_with_both_runtimes(&repo);
 
-    let init = run_agentmesh(
+    let init = run_agentmesh_with_env(
         &repo,
         &cache,
         &[
@@ -737,6 +737,7 @@ fn init_projects_all_entities_and_installs_detected_runtime_hooks() {
             "--canonical-instructions",
             "CLAUDE.md",
         ],
+        &[("AGENTMESH_DISABLE_WATCHER_AUTOSTART", "1")],
     );
 
     assert_success(&init);
@@ -1695,7 +1696,12 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         "---\nname: upgrade\n---\nUpgrade hook.\n",
     );
     write(repo.join(".codex/.keep"), "");
-    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "init", "-y"]));
+    assert_success(&run_agentmesh_with_env(
+        &repo,
+        &cache,
+        &["--silent", "init", "-y"],
+        &[("AGENTMESH_DISABLE_WATCHER_AUTOSTART", "1")],
+    ));
     let binary = agentmesh_bin().display().to_string();
     let stale_binary = temp.path().join("old-agentmesh").display().to_string();
     let escaped_binary = json_string_fragment(&binary);
@@ -1711,7 +1717,12 @@ fn upgrade_rewrites_recorded_runtime_hooks_to_current_binary() {
         assert!(read(&overlay).contains(&escaped_stale_binary));
     }
 
-    let upgrade = run_agentmesh(&repo, &cache, &["--silent", "upgrade", "-y"]);
+    let upgrade = run_agentmesh_with_env(
+        &repo,
+        &cache,
+        &["--silent", "upgrade", "-y"],
+        &[("AGENTMESH_DISABLE_WATCHER_AUTOSTART", "1")],
+    );
 
     assert_success(&upgrade);
     for overlay in [
