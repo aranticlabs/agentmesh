@@ -4,9 +4,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod hooks;
+
 use agentmesh_adapter_sdk_rust::{
     Adapter, AdapterError, AdapterMetadata, FormatTranslation, FrontmatterDocument,
-    compose_frontmatter, ensure_hook_array, find_hook_array_mut, find_hook_group, hash_files,
+    collect_entity_files, compose_frontmatter, dir_entry_file_type, ensure_hook_array,
+    find_hook_array_mut, find_hook_group, hash_files, is_regular_dir, is_regular_file,
     is_safe_relative, max_mtime_string, mtime_string, parse_frontmatter, read_dir_sorted,
     read_json_object, read_to_string, remove_matching_entries, remove_recorded_entries, selected,
     sha256_bytes, skipped_entity, slug_for_entity, slugify, workspace_relative, workspace_root_for,
@@ -71,7 +74,9 @@ impl Adapter for CodexAdapter {
         let mut skipped = Vec::new();
 
         let instructions_path = workspace_root.join("AGENTS.md");
-        if selected(filter, &[PathBuf::from("AGENTS.md")]) && instructions_path.is_file() {
+        if selected(filter, &[PathBuf::from("AGENTS.md")])
+            && is_regular_file(&workspace_root, &instructions_path)?
+        {
             entities.push(import_markdown_entity(
                 &instructions_path,
                 EntityType::Instructions,
@@ -196,118 +201,14 @@ impl Adapter for CodexAdapter {
         &self,
         request: InstallHooksRequest,
     ) -> agentmesh_adapter_sdk_rust::Result<InstallHooksResponse> {
-        if !request.agentmesh_binary_path.is_absolute() {
-            return Err(AdapterError::rpc(
-                AdapterErrorCode::HookInstallFailed,
-                "agentmesh_binary_path must be absolute",
-            ));
-        }
-
-        let workspace_root = workspace_root_for(&request.runtime_dir)?;
-        let overlay = request.runtime_dir.join("hooks.json");
-        let matcher = codex_matcher(request.matcher_extra.as_deref());
-        let command = format!(
-            "{} sync --trigger=codex-hook --silent",
-            request.agentmesh_binary_path.display()
-        );
-        let mut value = read_json_object(&overlay)?;
-        let post_tool_use = ensure_hook_array(&mut value, &["PostToolUse"])?;
-
-        if let Some(index) = find_hook_group(post_tool_use, &command) {
-            return Ok(InstallHooksResponse {
-                hooks_installed: vec![InstalledHook {
-                    overlay_file: workspace_relative(&workspace_root, &overlay)?,
-                    entry_path: format!("$.PostToolUse[{index}]"),
-                    command,
-                    matcher,
-                }],
-                fallback_needed: false,
-                fallback_reason: None,
-            });
-        }
-
-        post_tool_use.push(json!({
-            "matcher": matcher,
-            "hooks": [{
-                "type": "command",
-                "command": command,
-                "timeout": 5,
-                "statusMessage": "AgentMesh sync",
-            }],
-        }));
-        let index = post_tool_use.len() - 1;
-        write_json_pretty(&overlay, &value)?;
-
-        Ok(InstallHooksResponse {
-            hooks_installed: vec![InstalledHook {
-                overlay_file: workspace_relative(&workspace_root, &overlay)?,
-                entry_path: format!("$.PostToolUse[{index}]"),
-                command,
-                matcher,
-            }],
-            fallback_needed: false,
-            fallback_reason: None,
-        })
+        hooks::install_hooks(request)
     }
 
     fn remove_hooks(
         &self,
         request: RemoveHooksRequest,
     ) -> agentmesh_adapter_sdk_rust::Result<RemoveHooksResponse> {
-        let overlay = request.runtime_dir.join("hooks.json");
-        if !overlay.exists() {
-            return Ok(RemoveHooksResponse {
-                ok: false,
-                removed_count: 0,
-                error: Some("Codex hook overlay does not exist".to_string()),
-            });
-        }
-
-        let mut value = read_json_object(&overlay)?;
-        let removed = {
-            let Some(post_tool_use) = find_hook_array_mut(&mut value, &["PostToolUse"]) else {
-                return Ok(RemoveHooksResponse {
-                    ok: false,
-                    removed_count: 0,
-                    error: Some("Codex PostToolUse hook array not found".to_string()),
-                });
-            };
-
-            let mut removed = remove_recorded_entries(
-                post_tool_use,
-                &request.entry_paths,
-                "$.PostToolUse",
-                "codex-hook",
-            );
-            if removed == 0 {
-                removed = remove_matching_entries(post_tool_use, "codex-hook");
-            }
-            removed
-        };
-
-        if removed == 0 {
-            return Ok(RemoveHooksResponse {
-                ok: false,
-                removed_count: 0,
-                error: Some("AgentMesh Codex hook entry not found".to_string()),
-            });
-        }
-
-        if codex_hooks_are_empty(&value) {
-            fs::remove_file(&overlay).map_err(|source| AdapterError::Io {
-                action: "remove file",
-                path: overlay.clone(),
-                source,
-            })?;
-        } else {
-            write_json_pretty(&overlay, &value)?;
-        }
-
-        Ok(RemoveHooksResponse {
-            ok: true,
-            removed_count: removed,
-            error: None,
-        })
+        hooks::remove_hooks(request)
     }
 }
 
@@ -331,13 +232,29 @@ fn import_skills(
     entities: &mut Vec<ImportedEntity>,
     skipped: &mut Vec<SkippedPath>,
 ) -> agentmesh_adapter_sdk_rust::Result<()> {
-    if !skills_root.is_dir() {
-        return Ok(());
+    match is_regular_dir(workspace_root, skills_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, skills_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
     }
 
     for entry in read_dir_sorted(skills_root)? {
         let path = entry.path();
-        if !path.is_dir() {
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked skill path is not supported".to_string(),
+            });
+            continue;
+        }
+        if !file_type.is_dir() {
             continue;
         }
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -358,13 +275,32 @@ fn import_skills(
         let source_path = path.join("SKILL.md");
         let source_relative = workspace_relative(workspace_root, &source_path)?;
         let skill_relative = workspace_relative(workspace_root, &path)?;
-        if !selected(filter, &[source_relative.clone(), skill_relative]) || !source_path.is_file() {
+        if !selected(filter, &[source_relative.clone(), skill_relative]) {
+            continue;
+        }
+        let source_is_file = match is_regular_file(workspace_root, &source_path) {
+            Ok(source_is_file) => source_is_file,
+            Err(error) => {
+                skipped.push(SkippedPath {
+                    path: source_relative,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+        if !source_is_file {
             continue;
         }
 
         let slug = slugify(name);
         let mut files = BTreeMap::new();
-        collect_entity_files(&path, &path, &mut files)?;
+        if let Err(error) = collect_entity_files(&path, &path, &mut files) {
+            skipped.push(SkippedPath {
+                path: workspace_relative(workspace_root, &path)?,
+                reason: error.to_string(),
+            });
+            continue;
+        }
         let content = read_to_string(&source_path)?;
         let frontmatter = frontmatter_json(&content)?;
 
@@ -384,6 +320,10 @@ fn import_skills(
     Ok(())
 }
 
+fn relative_or_path(workspace_root: &Path, path: &Path) -> PathBuf {
+    workspace_relative(workspace_root, path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn import_subagents(
     workspace_root: &Path,
     agents_root: &Path,
@@ -391,13 +331,31 @@ fn import_subagents(
     entities: &mut Vec<ImportedEntity>,
     skipped: &mut Vec<SkippedPath>,
 ) -> agentmesh_adapter_sdk_rust::Result<()> {
-    if !agents_root.is_dir() {
-        return Ok(());
+    match is_regular_dir(workspace_root, agents_root) {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, agents_root),
+                reason: error.to_string(),
+            });
+            return Ok(());
+        }
     }
 
     for entry in read_dir_sorted(agents_root)? {
         let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+        let file_type = dir_entry_file_type(&entry)?;
+        if file_type.is_symlink() {
+            skipped.push(SkippedPath {
+                path: relative_or_path(workspace_root, &path),
+                reason: "symlinked subagent path is not supported".to_string(),
+            });
+            continue;
+        }
+        if !file_type.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("toml")
+        {
             continue;
         }
         let source_relative = workspace_relative(workspace_root, &path)?;
@@ -478,6 +436,7 @@ fn import_toml_subagent(
         .iter()
         .map(|(key, value)| (key.clone(), toml_to_json(value)))
         .collect::<BTreeMap<_, _>>();
+    normalize_imported_codex_skills(&mut frontmatter);
     let body = frontmatter
         .get("instructions")
         .or_else(|| frontmatter.get("prompt"))
@@ -509,32 +468,6 @@ fn import_toml_subagent(
         source_path,
         source_mtime: mtime_string(path)?,
     })
-}
-
-fn collect_entity_files(
-    root: &Path,
-    dir: &Path,
-    files: &mut BTreeMap<PathBuf, EntityFile>,
-) -> agentmesh_adapter_sdk_rust::Result<()> {
-    for entry in read_dir_sorted(dir)? {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_entity_files(root, &path, files)?;
-            continue;
-        }
-        if !path.is_file() {
-            continue;
-        }
-        let relative = path.strip_prefix(root).map_err(|_| {
-            AdapterError::rpc(
-                AdapterErrorCode::WorkspaceOutsideBound,
-                format!("{} is outside {}", path.display(), root.display()),
-            )
-        })?;
-        files.insert(relative.to_path_buf(), read_entity_file(&path)?);
-    }
-
-    Ok(())
 }
 
 fn first_file_content(files: &BTreeMap<PathBuf, EntityFile>) -> Option<String> {
@@ -585,6 +518,7 @@ fn render_toml_subagent(
             .iter()
             .map(|(key, value)| (key.clone(), value.clone())),
     );
+    normalize_codex_skills_for_emit(&mut merged);
 
     let body = toml_instructions_body(&document.body);
     if !document.body.is_empty()
@@ -604,6 +538,58 @@ fn render_toml_subagent(
         }
     }
     Ok(serialize_toml_table(&table))
+}
+
+fn normalize_imported_codex_skills(frontmatter: &mut BTreeMap<String, JsonValue>) {
+    let Some(skills) = frontmatter.get("skills").cloned() else {
+        return;
+    };
+    let Some(bundled) = extract_current_codex_bundled_skills(&skills) else {
+        return;
+    };
+    frontmatter.insert("skills".to_string(), JsonValue::Array(bundled));
+}
+
+fn normalize_codex_skills_for_emit(frontmatter: &mut BTreeMap<String, JsonValue>) {
+    let Some(skills) = frontmatter.get("skills").cloned() else {
+        return;
+    };
+    let Some(bundled) = extract_canonical_skills(&skills) else {
+        return;
+    };
+    frontmatter.insert(
+        "skills".to_string(),
+        JsonValue::Object(
+            [("bundled".to_string(), JsonValue::Array(bundled))]
+                .into_iter()
+                .collect(),
+        ),
+    );
+}
+
+fn extract_current_codex_bundled_skills(value: &JsonValue) -> Option<Vec<JsonValue>> {
+    let JsonValue::Object(object) = value else {
+        return None;
+    };
+    object.get("bundled").and_then(extract_canonical_skills)
+}
+
+fn extract_canonical_skills(value: &JsonValue) -> Option<Vec<JsonValue>> {
+    match value {
+        JsonValue::Array(values) => {
+            let skills = values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(|skill| JsonValue::String(skill.to_string()))
+                .collect::<Vec<_>>();
+            if skills.is_empty() {
+                None
+            } else {
+                Some(skills)
+            }
+        }
+        _ => None,
+    }
 }
 
 fn toml_instructions_body(body: &str) -> String {
@@ -803,16 +789,6 @@ fn skill_runtime_file(path: &Path, slug: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
-fn read_entity_file(path: &Path) -> agentmesh_adapter_sdk_rust::Result<EntityFile> {
-    fs::read(path)
-        .map(EntityFile::from_bytes)
-        .map_err(|source| AdapterError::Io {
-            action: "read file",
-            path: path.to_path_buf(),
-            source,
-        })
-}
-
 fn file_text(file: &EntityFile) -> Option<String> {
     match file.encoding {
         EntityFileEncoding::Utf8 => Some(file.content.clone()),
@@ -839,23 +815,6 @@ fn entity_file_bytes(
             format!("failed to decode {}: {source}", path.display()),
         )
     })
-}
-
-fn codex_matcher(extra: Option<&str>) -> String {
-    let mut tools = vec!["Edit", "Write", "MultiEdit"];
-    if let Some(extra) = extra.map(str::trim).filter(|extra| !extra.is_empty()) {
-        tools.push(extra);
-    }
-    format!("^({})$", tools.join("|"))
-}
-
-fn codex_hooks_are_empty(value: &JsonValue) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    object
-        .iter()
-        .all(|(key, value)| key == "PostToolUse" && value.as_array().is_some_and(Vec::is_empty))
 }
 
 #[cfg(test)]
@@ -914,7 +873,7 @@ mod tests {
         );
         write(
             root.join(".codex/agents/code-reviewer.toml"),
-            "name = \"code-reviewer\"\nmodel = \"gpt-5\"\ninstructions = \"Review code.\"\n",
+            "name = \"code-reviewer\"\nmodel = \"gpt-5\"\ninstructions = \"Review code.\"\n\n[skills]\nbundled = [\"security-review\"]\n",
         );
 
         let adapter = CodexAdapter;
@@ -936,6 +895,10 @@ mod tests {
         };
         assert_eq!(subagent.frontmatter.get("model"), Some(&json!("gpt-5")));
         assert_eq!(subagent.frontmatter.get("instructions"), None);
+        assert_eq!(
+            subagent.frontmatter.get("skills"),
+            Some(&json!(["security-review"]))
+        );
         assert!(
             subagent
                 .files
@@ -996,6 +959,47 @@ mod tests {
         let content = read(root.join(".codex/agents/code-reviewer.toml"));
         assert!(content.contains("name = \"code-reviewer\""));
         assert!(content.contains("instructions = \"Review code.\""));
+    }
+
+    #[test]
+    fn emits_codex_subagent_skills_as_structured_table() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        let adapter = CodexAdapter;
+        let files = BTreeMap::from([(
+            PathBuf::from("code-reviewer.md"),
+            file(
+                "---\nname: code-reviewer\nmodel: gpt-5\nskills:\n  - add-endpoint\n  - explore-architecture\n---\nReview code.\n",
+            ),
+        )]);
+
+        let response = match adapter.emit(EmitRequest {
+            runtime_dir: root.join(".codex"),
+            mode: RuntimeMode::Managed,
+            entities: vec![EmitEntity {
+                id: "subagent:code-reviewer".to_string(),
+                entity_type: agentmesh_protocol::EntityType::Subagent,
+                scope: None,
+                files,
+                frontmatter: BTreeMap::new(),
+                overrides: BTreeMap::new(),
+            }],
+        }) {
+            Ok(response) => response,
+            Err(error) => panic!("emit should succeed: {error}"),
+        };
+
+        assert_eq!(
+            response.files_written,
+            vec![PathBuf::from(".codex/agents/code-reviewer.toml")]
+        );
+        let content = read(root.join(".codex/agents/code-reviewer.toml"));
+        assert!(content.contains("[skills]"));
+        assert!(content.contains("bundled = [\"add-endpoint\", \"explore-architecture\"]"));
+        assert!(!content.contains("skills = \""));
     }
 
     #[test]
@@ -1064,10 +1068,11 @@ mod tests {
             Err(error) => panic!("install should succeed: {error}"),
         };
 
-        assert_eq!(installed.hooks_installed[0].entry_path, "$.PostToolUse[0]");
+        assert_eq!(installed.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
         let overlay = read(root.join(".codex/hooks.json"));
         assert!(overlay.contains("codex-hook"));
         assert!(overlay.contains("AgentMesh sync"));
+        assert!(overlay.contains("\"hooks\""));
 
         let removed = match adapter.remove_hooks(RemoveHooksRequest {
             runtime_dir: root.join(".codex"),
@@ -1089,7 +1094,7 @@ mod tests {
         let root = temp.path();
         write(
             root.join(".codex/hooks.json"),
-            r#"{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}"#,
+            r#"{"hooks":{"PostToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"echo user"}]}]}}"#,
         );
         let adapter = CodexAdapter;
 
@@ -1101,7 +1106,7 @@ mod tests {
             Ok(installed) => installed,
             Err(error) => panic!("install should succeed: {error}"),
         };
-        assert_eq!(installed.hooks_installed[0].entry_path, "$.PostToolUse[1]");
+        assert_eq!(installed.hooks_installed[0].entry_path, "$.hooks.PostToolUse[1]");
 
         let removed = match adapter.remove_hooks(RemoveHooksRequest {
             runtime_dir: root.join(".codex"),
@@ -1259,8 +1264,8 @@ severity = ["high", "medium"]
         let overlay = read(root.join(".codex/hooks.json"));
         let hook_count = overlay.matches("codex-hook").count();
 
-        assert_eq!(first.hooks_installed[0].entry_path, "$.PostToolUse[0]");
-        assert_eq!(second.hooks_installed[0].entry_path, "$.PostToolUse[0]");
+        assert_eq!(first.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
+        assert_eq!(second.hooks_installed[0].entry_path, "$.hooks.PostToolUse[0]");
         assert_eq!(hook_count, 1);
     }
 

@@ -442,6 +442,35 @@ verify_manifest_signature() {
   }
 }
 
+repair_macos_codesign() {
+  binary_path="$1"
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "codesign is required to repair the macOS code signature for $binary_path" >&2
+    return 127
+  fi
+  output="$(codesign --force --sign - "$binary_path" 2>&1)" || {
+    printf '%s\n' "$output" >&2
+    return 1
+  }
+}
+
+verify_installed_binary_launches() {
+  binary_path="$1"
+  if "$binary_path" --version >/dev/null 2>&1; then
+    return 0
+  else
+    status="$?"
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ] && [ "$status" -eq 137 ]; then
+    repair_macos_codesign "$binary_path" || return "$?"
+    "$binary_path" --version >/dev/null 2>&1
+    return "$?"
+  fi
+
+  return "$status"
+}
+
 print_success_banner() {
   binary_path="$1"
   tag="$2"
@@ -548,6 +577,7 @@ install_archive() {
   mkdir -p "$install_dir"
   chmod +x "$binary"
   run_install_step "Installing AgentMesh into $install_dir" cp "$binary" "$install_dir/$binary_name"
+  run_install_step "Verifying installed AgentMesh launches" verify_installed_binary_launches "$install_dir/$binary_name"
   print_success_banner "$install_dir/$binary_name" "$tag"
   case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
@@ -665,9 +695,10 @@ Usage:
   install.sh --smoke
 
 The installer downloads the platform archive, verifies it against SHA256SUMS,
-verifies the SHA256SUMS signature with cosign, and installs the single binary.
-Stable installs resolve the latest GitHub release by default. Set
-AGENTMESH_VERSION=x.y.z to install a specific stable version.
+verifies the SHA256SUMS signature with cosign, installs the single binary, and
+checks that the installed binary launches. Stable installs resolve the latest
+GitHub release by default. Set AGENTMESH_VERSION=x.y.z to install a specific
+stable version.
 USAGE
     exit 0
     ;;
