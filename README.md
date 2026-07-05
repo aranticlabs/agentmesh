@@ -3,7 +3,7 @@
 AgentMesh synchronizes project-level AI runtime context across coding tools.
 
 The v0.2 binary is a local-first Rust CLI with bundled adapters for Claude Code, Codex,
-GitHub Copilot, Cursor, and Gemini CLI. It normalizes project instructions, rules, prompts,
+GitHub Copilot, Cursor, and legacy Gemini CLI project surfaces. It normalizes project instructions, rules, prompts,
 skills, subagents, commands, hooks, MCP bindings, and permission policies into a shared repository
 model, then renders supported entities back into each runtime's native file layout.
 
@@ -43,7 +43,10 @@ present or planned:
 - GitHub Copilot: `.github/copilot-instructions.md`, `.github/instructions/`,
   `.github/prompts/`, `.github/skills/`, or `.github/agents/`
 - Cursor: `.cursor/rules/`
-- Gemini CLI: `GEMINI.md`, nested `GEMINI.md`, `.gemini/skills/`, or `.gemini/commands/`
+- Gemini CLI / Antigravity: legacy Gemini surfaces such as `GEMINI.md`, nested `GEMINI.md`,
+  `.gemini/skills/`, and `.gemini/commands/`; Antigravity's root `AGENTS.md` support is
+  already covered by canonical instructions, and shared `.agents/skills/` is imported where
+  a Google runtime is detected.
 
 Preview detection without writing:
 
@@ -85,6 +88,10 @@ Commit native runtime files that are part of your team workflow, such as `CLAUDE
 `.claude/rules/`, `.codex/config.toml`, `.github/`, `.cursor/rules/`, `GEMINI.md`, `.gemini/`,
 and shared `.agents/skills/`.
 
+Antigravity-native `.agents/rules/` and `.agents/mcp_config.json` are separate native surfaces.
+Treat them as unsupported until the Google runtime adapter contract explicitly marks them
+write-enabled.
+
 Do not commit machine-local hook files (`.claude/settings.local.json`, `.codex/hooks.json`). Each
 teammate runs `agentmesh init` on their machine. Add `.codex/hooks.json` to `.gitignore`.
 
@@ -93,8 +100,9 @@ open Codex in the repository and run any tool-backed action; when Codex asks whe
 AgentMesh hook command, approve it once. Sync still works via the watcher daemon, Claude hooks, and
 manual `agentmesh sync` until then.
 
-Cursor, GitHub Copilot, and Gemini CLI are watcher/manual-sync runtimes in v0.2. AgentMesh imports
-and emits their write-enabled project files, but does not install native runtime hooks for them.
+Cursor, GitHub Copilot, and Google runtime surfaces without stable native hooks are
+watcher/manual-sync runtimes in v0.2. AgentMesh imports and emits their write-enabled project
+files, but does not install native runtime hooks for them.
 `agentmesh doctor` reports read-only and deferred surfaces instead of silently writing unsupported
 files.
 
