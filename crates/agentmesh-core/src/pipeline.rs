@@ -4830,6 +4830,7 @@ schema: 2
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn invalid_cursor_rule_fails_sync_check_and_reports_in_doctor() {
         let temp = match tempfile::tempdir() {
@@ -5432,6 +5433,7 @@ schema: 2
         assert!(!repo.join("agentmesh.lock").exists());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn invalid_gemini_write_enabled_files_fail_sync_check_and_report_in_doctor() {
         let temp = match tempfile::tempdir() {
@@ -5484,6 +5486,7 @@ schema: 2
         }));
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn invalid_copilot_write_enabled_files_fail_sync_check_and_report_in_doctor() {
         let temp = match tempfile::tempdir() {
