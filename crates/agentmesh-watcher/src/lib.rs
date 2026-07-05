@@ -270,26 +270,25 @@ fn start_with_cache_root(
     let layout = WatcherLayout::new(repo_root, cache_root)?;
     layout.ensure_dirs()?;
 
-    if !opts.register_as_service {
-        if let Some(record) = read_active_record(&layout)? {
-            if is_running_state(&record.state) {
-                if opts.foreground
-                    && record.pid == std::process::id()
-                    && record.state == STATE_BACKGROUND_SPAWNED
-                {
-                    return run_foreground(repo_root, opts, &layout);
-                }
-                append_log(
-                    &layout.log_file,
-                    "start-idempotent",
-                    json!({
-                        "pid": record.pid,
-                        "state": record.state,
-                    }),
-                )?;
-                return Ok(handle(repo_root, &layout));
-            }
+    if !opts.register_as_service
+        && let Some(record) = read_active_record(&layout)?
+        && is_running_state(&record.state)
+    {
+        if opts.foreground
+            && record.pid == std::process::id()
+            && record.state == STATE_BACKGROUND_SPAWNED
+        {
+            return run_foreground(repo_root, opts, &layout);
         }
+        append_log(
+            &layout.log_file,
+            "start-idempotent",
+            json!({
+                "pid": record.pid,
+                "state": record.state,
+            }),
+        )?;
+        return Ok(handle(repo_root, &layout));
     }
 
     if opts.register_as_service {
@@ -309,18 +308,18 @@ fn spawn_background(
     opts: WatchOptions,
     layout: &WatcherLayout,
 ) -> Result<WatcherHandle> {
-    if let Some(record) = read_active_record(layout)? {
-        if is_running_state(&record.state) {
-            append_log(
-                &layout.log_file,
-                "start-idempotent",
-                json!({
-                    "pid": record.pid,
-                    "state": record.state,
-                }),
-            )?;
-            return Ok(handle(repo_root, layout));
-        }
+    if let Some(record) = read_active_record(layout)?
+        && is_running_state(&record.state)
+    {
+        append_log(
+            &layout.log_file,
+            "start-idempotent",
+            json!({
+                "pid": record.pid,
+                "state": record.state,
+            }),
+        )?;
+        return Ok(handle(repo_root, layout));
     }
 
     let executable = env::current_exe().map_err(|source| WatcherError::Io {
@@ -380,10 +379,12 @@ fn spawn_background(
 fn wait_for_background_start(layout: &WatcherLayout, pid: u32) -> Result<()> {
     let deadline = Instant::now() + BACKGROUND_START_TIMEOUT;
     loop {
-        if let Ok(record) = read_json::<WatcherRecord>(&layout.state_file) {
-            if record.pid == pid && record.state == STATE_RUNNING && process_running(pid) {
-                return Ok(());
-            }
+        if let Ok(record) = read_json::<WatcherRecord>(&layout.state_file)
+            && record.pid == pid
+            && record.state == STATE_RUNNING
+            && process_running(pid)
+        {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             append_log(

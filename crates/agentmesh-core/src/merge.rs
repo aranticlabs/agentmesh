@@ -321,15 +321,14 @@ fn merge_value(
     if incoming == ancestor {
         return ValueMerge::Value(current.cloned());
     }
-    if SET_LIKE_KEYS.contains(&key) {
-        if let (
+    if SET_LIKE_KEYS.contains(&key)
+        && let (
             Some(Value::Sequence(ancestor)),
             Some(Value::Sequence(current)),
             Some(Value::Sequence(incoming)),
         ) = (ancestor, current, incoming)
-        {
-            return ValueMerge::Value(Some(merge_set_like_sequence(ancestor, current, incoming)));
-        }
+    {
+        return ValueMerge::Value(Some(merge_set_like_sequence(ancestor, current, incoming)));
     }
 
     ValueMerge::Conflict

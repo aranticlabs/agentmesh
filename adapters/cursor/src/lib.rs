@@ -511,13 +511,14 @@ fn cursor_frontmatter_for_emit(
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect()
     };
-    if scoped_instruction && !frontmatter.contains_key("globs") {
-        if let Some(scope) = entity.scope.as_deref().filter(|scope| *scope != "root") {
-            frontmatter.insert(
-                "globs".to_string(),
-                JsonValue::Array(vec![JsonValue::String(scope.to_string())]),
-            );
-        }
+    if scoped_instruction
+        && !frontmatter.contains_key("globs")
+        && let Some(scope) = entity.scope.as_deref().filter(|scope| *scope != "root")
+    {
+        frontmatter.insert(
+            "globs".to_string(),
+            JsonValue::Array(vec![JsonValue::String(scope.to_string())]),
+        );
     }
     frontmatter
 }

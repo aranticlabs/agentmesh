@@ -228,10 +228,10 @@ fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
 
 fn write(path: impl AsRef<Path>, content: &str) {
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            panic!("parent directory should be created: {error}");
-        }
+    if let Some(parent) = path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        panic!("parent directory should be created: {error}");
     }
     if let Err(error) = fs::write(path, content) {
         panic!("file should be written: {error}");
@@ -268,10 +268,10 @@ fn find_named_file(root: &Path, file_name: &str) -> Option<PathBuf> {
         if path.file_name().and_then(|name| name.to_str()) == Some(file_name) {
             return Some(path);
         }
-        if path.is_dir() {
-            if let Some(found) = find_named_file(&path, file_name) {
-                return Some(found);
-            }
+        if path.is_dir()
+            && let Some(found) = find_named_file(&path, file_name)
+        {
+            return Some(found);
         }
     }
     None
@@ -283,15 +283,15 @@ fn find_file_containing(root: &Path, needle: &str) -> Option<PathBuf> {
         let entry = entry.ok()?;
         let path = entry.path();
         if path.is_file() {
-            if let Ok(contents) = fs::read_to_string(&path) {
-                if contents.contains(needle) {
-                    return Some(path);
-                }
+            if let Ok(contents) = fs::read_to_string(&path)
+                && contents.contains(needle)
+            {
+                return Some(path);
             }
-        } else if path.is_dir() {
-            if let Some(found) = find_file_containing(&path, needle) {
-                return Some(found);
-            }
+        } else if path.is_dir()
+            && let Some(found) = find_file_containing(&path, needle)
+        {
+            return Some(found);
         }
     }
     None

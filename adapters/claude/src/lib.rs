@@ -279,9 +279,8 @@ impl Adapter for ClaudeAdapter {
                     files_written.push(workspace_relative(&workspace_root, &target)?);
                 }
                 EntityType::McpBinding => {
-                    let value = JsonValue::Object(json_object_from_entity(&entity, "mcp binding")?);
                     let target = workspace_root.join(".mcp.json");
-                    write_json_pretty(&target, &value)?;
+                    merge_json_section(&target, "mcpServers", &entity)?;
                     files_written.push(PathBuf::from(".mcp.json"));
                 }
                 EntityType::PermissionPolicy => {
@@ -1126,8 +1125,19 @@ fn merge_json_section(
             "settings JSON root must be an object",
         ));
     };
-    existing_object.insert(section_key.to_string(), replacement);
+    let merged = merge_json_section_value(existing_object.remove(section_key), replacement);
+    existing_object.insert(section_key.to_string(), merged);
     write_json_pretty(target, &existing)
+}
+
+fn merge_json_section_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
+    match (existing, replacement) {
+        (Some(JsonValue::Object(mut existing)), JsonValue::Object(replacement)) => {
+            existing.extend(replacement);
+            JsonValue::Object(existing)
+        }
+        (_, replacement) => replacement,
+    }
 }
 
 fn json_object_from_entity(
@@ -1792,6 +1802,47 @@ mod tests {
         assert!(settings.contains("\"permissions\""));
     }
 
+    #[test]
+    fn emits_claude_mcp_binding_without_clobbering_other_servers() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{"filesystem":{"command":"old-node"},"browser":{"command":"browser-server"}},"metadata":{"owner":"user"}}"#,
+        );
+        let adapter = ClaudeAdapter;
+
+        adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".claude"),
+                mode: RuntimeMode::Managed,
+                entities: vec![EmitEntity {
+                    id: "mcp-binding:project".to_string(),
+                    entity_type: agentmesh_protocol::EntityType::McpBinding,
+                    scope: None,
+                    source_path: None,
+                    files: BTreeMap::from([(
+                        PathBuf::from("project.json"),
+                        file(r#"{"mcpServers":{"filesystem":{"command":"node","args":["server.js"]}}}"#),
+                    )]),
+                    frontmatter: BTreeMap::new(),
+                    overrides: BTreeMap::new(),
+                }],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        let mcp = read(root.join(".mcp.json"));
+        assert!(mcp.contains("\"filesystem\""));
+        assert!(mcp.contains("\"command\": \"node\""));
+        assert!(mcp.contains("\"browser\""));
+        assert!(mcp.contains("\"browser-server\""));
+        assert!(mcp.contains("\"owner\": \"user\""));
+        assert!(!mcp.contains("old-node"));
+    }
+
     proptest! {
         #[test]
         fn skill_import_emit_import_roundtrip_preserves_entity_shape(
@@ -1896,10 +1947,10 @@ mod tests {
 
     fn write(path: impl AsRef<Path>, content: &str) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");
@@ -1908,10 +1959,10 @@ mod tests {
 
     fn write_bytes(path: impl AsRef<Path>, content: &[u8]) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");

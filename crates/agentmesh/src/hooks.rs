@@ -140,15 +140,15 @@ pub(crate) fn install_git_pre_commit_hook(context: &CliContext, force: bool) -> 
         if existing_is_agentmesh {
             saved.exists()
         } else {
-            if let Some(framework) = detect_pre_commit_framework(content) {
-                if !force {
-                    return Err(CliError::new(
-                        format!(
-                            "detected {framework} managing pre-commit; add AgentMesh to that framework or rerun with --force"
-                        ),
-                        AgentmeshExitCode::Usage,
-                    ));
-                }
+            if let Some(framework) = detect_pre_commit_framework(content)
+                && !force
+            {
+                return Err(CliError::new(
+                    format!(
+                        "detected {framework} managing pre-commit; add AgentMesh to that framework or rerun with --force"
+                    ),
+                    AgentmeshExitCode::Usage,
+                ));
             }
             if saved.exists() {
                 return Err(CliError::new(

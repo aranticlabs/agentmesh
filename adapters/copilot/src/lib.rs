@@ -1052,13 +1052,13 @@ fn validate_copilot_write_path(
             format!("{} is outside declared {label} roots", target.display()),
         ));
     }
-    if let Some(extension) = required_extension {
-        if target.extension().and_then(|value| value.to_str()) != Some(extension) {
-            return Err(AdapterError::rpc(
-                AdapterErrorCode::WorkspaceOutsideBound,
-                format!("{label} target must use .{extension}: {}", target.display()),
-            ));
-        }
+    if let Some(extension) = required_extension
+        && target.extension().and_then(|value| value.to_str()) != Some(extension)
+    {
+        return Err(AdapterError::rpc(
+            AdapterErrorCode::WorkspaceOutsideBound,
+            format!("{label} target must use .{extension}: {}", target.display()),
+        ));
     }
     let parent = target.parent().ok_or_else(|| {
         AdapterError::rpc(

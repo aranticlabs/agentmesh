@@ -1690,14 +1690,15 @@ fn resolve_canonical_contents(
     canonical_instructions: Option<CanonicalInstructions>,
     preserve_conflicts: bool,
 ) -> Result<CanonicalDecision> {
-    if entity_type == EntityType::Instructions && previous_entry.is_none() {
-        if let Some(preferred) = preferred_instruction_view(views, canonical_instructions) {
-            return Ok(CanonicalDecision {
-                contents: preferred.canonical_contents.clone(),
-                files: preferred.files.clone(),
-                pending_conflict_resolution: false,
-            });
-        }
+    if entity_type == EntityType::Instructions
+        && previous_entry.is_none()
+        && let Some(preferred) = preferred_instruction_view(views, canonical_instructions)
+    {
+        return Ok(CanonicalDecision {
+            contents: preferred.canonical_contents.clone(),
+            files: preferred.files.clone(),
+            pending_conflict_resolution: false,
+        });
     }
 
     if all_canonical_payloads_equal(views) {
@@ -1741,10 +1742,9 @@ fn resolve_canonical_contents(
     if (!entity_type.is_configuration_only() || entity_type == EntityType::Command)
         && entity_type != EntityType::Instructions
         && changed.iter().all(|view| is_markdown_view(view))
+        && let Some(ancestor) = unchanged_ancestor_view(views, previous_entry)
     {
-        if let Some(ancestor) = unchanged_ancestor_view(views, previous_entry) {
-            return merge_changed_views(cache, entity_id, ancestor, &changed, preserve_conflicts);
-        }
+        return merge_changed_views(cache, entity_id, ancestor, &changed, preserve_conflicts);
     }
 
     tiebreak_changed_views(cache, entity_id, &changed, preserve_conflicts)
@@ -2795,10 +2795,10 @@ fn affected_entity_ids(
         .entities
         .iter()
         .filter(|(_, entity)| {
-            if let Some(record_type) = record.entity_type {
-                if entity.entity_type != record_type {
-                    return false;
-                }
+            if let Some(record_type) = record.entity_type
+                && entity.entity_type != record_type
+            {
+                return false;
             }
             entity.locations.iter().any(|(location, lockfile_path)| {
                 let Ok(absolute_path) = path_from_lockfile(repo_root, location, lockfile_path)
@@ -6471,10 +6471,10 @@ schema: 2
 
         for (_, _, repo_path, _, contents) in cases {
             let path = repo.join(repo_path);
-            if let Some(parent) = path.parent() {
-                if let Err(error) = fs::create_dir_all(parent) {
-                    panic!("fixture dirs should be created: {error}");
-                }
+            if let Some(parent) = path.parent()
+                && let Err(error) = fs::create_dir_all(parent)
+            {
+                panic!("fixture dirs should be created: {error}");
             }
             if let Err(error) = fs::write(path, contents) {
                 panic!("fixture should be written: {error}");

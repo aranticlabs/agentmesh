@@ -211,18 +211,18 @@ fn collect_sensitive_json_keys(
     warnings: &mut Vec<String>,
     warning_count: &mut usize,
 ) {
-    if let Some(key) = key {
-        if contains_sensitive_term(key) {
-            push_privacy_warning(
-                warnings,
-                warning_count,
-                format!(
-                    "override key `{key}` for `{}` at `{}` looks sensitive; keep secrets in machine-local config or environment variables",
-                    entity_id.as_str(),
-                    runtime.as_str()
-                ),
-            );
-        }
+    if let Some(key) = key
+        && contains_sensitive_term(key)
+    {
+        push_privacy_warning(
+            warnings,
+            warning_count,
+            format!(
+                "override key `{key}` for `{}` at `{}` looks sensitive; keep secrets in machine-local config or environment variables",
+                entity_id.as_str(),
+                runtime.as_str()
+            ),
+        );
     }
 
     match value {

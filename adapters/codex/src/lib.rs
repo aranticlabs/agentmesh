@@ -217,9 +217,8 @@ impl Adapter for CodexAdapter {
                     files_written.push(workspace_relative(&workspace_root, &path)?);
                 }
                 EntityType::Hook => {
-                    let value = JsonValue::Object(json_object_from_entity(&entity, "hook")?);
                     let target = request.runtime_dir.join("hooks.json");
-                    write_json_pretty(&target, &value)?;
+                    merge_json_section(&target, "hooks", &entity)?;
                     files_written.push(workspace_relative(&workspace_root, &target)?);
                 }
                 EntityType::McpBinding => {
@@ -935,18 +934,11 @@ fn is_root_instruction(id: &str, scope: Option<&str>) -> bool {
     id == "instructions:root" || scope == Some("root")
 }
 
-fn scoped_agents_path(id: &str, scope: Option<&str>) -> Option<PathBuf> {
+fn scoped_agents_path(_id: &str, scope: Option<&str>) -> Option<PathBuf> {
     if let Some(scope) = scope.and_then(scope_directory) {
         return Some(scope.join("AGENTS.md"));
     }
-    if scope.is_some() {
-        return None;
-    }
-    let slug = id
-        .strip_prefix("instructions:scoped:")
-        .unwrap_or("scoped")
-        .to_string();
-    Some(PathBuf::from(slug).join("AGENTS.md"))
+    None
 }
 
 fn scope_directory(scope: &str) -> Option<PathBuf> {
@@ -1038,6 +1030,65 @@ fn json_object_from_entity(
     }
 }
 
+fn merge_json_section(
+    target: &Path,
+    section_key: &str,
+    entity: &agentmesh_protocol::EmitEntity,
+) -> agentmesh_adapter_sdk_rust::Result<()> {
+    let mut existing = read_json_object(target)?;
+    let payload = json_object_from_entity(entity, section_key)?;
+    let replacement = payload
+        .get(section_key)
+        .cloned()
+        .unwrap_or(JsonValue::Object(payload));
+    let Some(existing_object) = existing.as_object_mut() else {
+        return Err(AdapterError::rpc(
+            AdapterErrorCode::FormatTranslationFailed,
+            "JSON root must be an object",
+        ));
+    };
+    let merged = merge_json_section_value(existing_object.remove(section_key), replacement);
+    existing_object.insert(section_key.to_string(), merged);
+    write_json_pretty(target, &existing)
+}
+
+fn merge_json_section_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
+    match (existing, replacement) {
+        (Some(JsonValue::Object(existing)), JsonValue::Object(replacement)) => {
+            JsonValue::Object(merge_json_objects(existing, replacement))
+        }
+        (_, replacement) => replacement,
+    }
+}
+
+fn merge_json_objects(
+    mut existing: serde_json::Map<String, JsonValue>,
+    replacement: serde_json::Map<String, JsonValue>,
+) -> serde_json::Map<String, JsonValue> {
+    for (key, value) in replacement {
+        let merged = match (existing.remove(&key), value) {
+            (Some(JsonValue::Object(existing)), JsonValue::Object(replacement)) => {
+                JsonValue::Object(merge_json_objects(existing, replacement))
+            }
+            (Some(JsonValue::Array(existing)), JsonValue::Array(replacement)) => {
+                JsonValue::Array(merge_json_arrays(existing, replacement))
+            }
+            (_, replacement) => replacement,
+        };
+        existing.insert(key, merged);
+    }
+    existing
+}
+
+fn merge_json_arrays(mut existing: Vec<JsonValue>, replacement: Vec<JsonValue>) -> Vec<JsonValue> {
+    for value in replacement {
+        if !existing.contains(&value) {
+            existing.push(value);
+        }
+    }
+    existing
+}
+
 fn read_toml_table(
     path: &Path,
 ) -> agentmesh_adapter_sdk_rust::Result<toml::map::Map<String, toml::Value>> {
@@ -1080,9 +1131,6 @@ fn merge_toml_sections(
         ));
     };
     let payload = toml_table_from_str(&content, target)?;
-    for key in section_keys {
-        existing.remove(*key);
-    }
     for key in section_keys {
         if let Some(value) = payload.get(*key) {
             existing.insert((*key).to_string(), value.clone());
@@ -1796,6 +1844,39 @@ mod tests {
     }
 
     #[test]
+    fn skips_codex_scoped_instruction_without_scope_or_source_path() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        let adapter = CodexAdapter;
+
+        let response = adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".codex"),
+                mode: RuntimeMode::Managed,
+                entities: vec![EmitEntity {
+                    id: "instructions:scoped:packages-api".to_string(),
+                    entity_type: agentmesh_protocol::EntityType::Instructions,
+                    scope: None,
+                    source_path: None,
+                    files: BTreeMap::from([(
+                        PathBuf::from("AGENTS.md"),
+                        file("Use API conventions.\n"),
+                    )]),
+                    frontmatter: BTreeMap::new(),
+                    overrides: BTreeMap::new(),
+                }],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed with skip: {error}"));
+
+        assert!(response.files_written.is_empty());
+        assert_eq!(response.skipped.len(), 1);
+        assert!(!root.join("packages-api/AGENTS.md").exists());
+    }
+
+    #[test]
     fn installs_and_removes_codex_hook_file() {
         let temp = match tempfile::tempdir() {
             Ok(temp) => temp,
@@ -2028,6 +2109,64 @@ severity = ["high", "medium"]
     }
 
     #[test]
+    fn install_migrates_legacy_codex_hook_without_duplication() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".codex/hooks.json"),
+            r#"{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"/old/agentmesh sync --trigger=codex-hook --silent"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"echo user"}]}]}"#,
+        );
+        let adapter = CodexAdapter;
+
+        let installed = adapter
+            .install_hooks(InstallHooksRequest {
+                runtime_dir: root.join(".codex"),
+                agentmesh_binary_path: absolute_agentmesh_binary_path(),
+                matcher_extra: None,
+            })
+            .unwrap_or_else(|error| panic!("install should succeed: {error}"));
+
+        assert_eq!(
+            installed.hooks_installed[0].entry_path,
+            "$.hooks.PostToolUse[0]"
+        );
+        let overlay = read(root.join(".codex/hooks.json"));
+        assert_eq!(overlay.matches("codex-hook").count(), 1);
+        assert!(!overlay.contains("/old/agentmesh"));
+        assert!(overlay.contains("echo user"));
+    }
+
+    #[test]
+    fn remove_codex_hook_handles_legacy_entries_without_deleting_user_hooks() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".codex/hooks.json"),
+            r#"{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"/old/agentmesh sync --trigger=codex-hook --silent"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"echo user"}]}]}"#,
+        );
+        let adapter = CodexAdapter;
+
+        let removed = adapter
+            .remove_hooks(RemoveHooksRequest {
+                runtime_dir: root.join(".codex"),
+                entry_paths: vec!["$.PostToolUse[0]".to_string()],
+            })
+            .unwrap_or_else(|error| panic!("remove should succeed: {error}"));
+
+        assert!(removed.ok);
+        assert_eq!(removed.removed_count, 1);
+        let overlay = read(root.join(".codex/hooks.json"));
+        assert!(overlay.contains("echo user"));
+        assert!(!overlay.contains("codex-hook"));
+    }
+
+    #[test]
     fn imports_codex_v02_project_surfaces_and_diagnostics() {
         let temp = match tempfile::tempdir() {
             Ok(temp) => temp,
@@ -2212,6 +2351,67 @@ sandbox_mode = "read-only"
         assert!(config.contains("sandbox_mode = \"read-only\""));
     }
 
+    #[test]
+    fn emits_codex_hook_and_permission_policy_additively() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".codex/hooks.json"),
+            r#"{"metadata":{"owner":"user"},"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo user"}]}]}}"#,
+        );
+        write(
+            root.join(".codex/config.toml"),
+            "approval_policy = \"on-request\"\nsandbox_mode = \"workspace-write\"\nmodel = \"gpt-5\"\n",
+        );
+        let adapter = CodexAdapter;
+
+        adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".codex"),
+                mode: RuntimeMode::Managed,
+                entities: vec![
+                    EmitEntity {
+                        id: "hook:codex-project".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::Hook,
+                        scope: None,
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("codex-project.json"),
+                            file(r#"{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"agentmesh sync --trigger=codex-hook --silent"}]}]}}"#),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                    EmitEntity {
+                        id: "permission-policy:codex-project".to_string(),
+                        entity_type: agentmesh_protocol::EntityType::PermissionPolicy,
+                        scope: None,
+                        source_path: None,
+                        files: BTreeMap::from([(
+                            PathBuf::from("codex-project.toml"),
+                            file("approval_policy = \"never\"\n"),
+                        )]),
+                        frontmatter: BTreeMap::new(),
+                        overrides: BTreeMap::new(),
+                    },
+                ],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        let hooks = read(root.join(".codex/hooks.json"));
+        assert!(hooks.contains("\"owner\": \"user\""));
+        assert!(hooks.contains("echo user"));
+        assert!(hooks.contains("codex-hook"));
+
+        let config = read(root.join(".codex/config.toml"));
+        assert!(config.contains("approval_policy = \"never\""));
+        assert!(config.contains("sandbox_mode = \"workspace-write\""));
+        assert!(config.contains("model = \"gpt-5\""));
+    }
+
     proptest! {
         #[test]
         fn import_emit_import_roundtrip_preserves_entity_shape(
@@ -2320,10 +2520,10 @@ sandbox_mode = "read-only"
 
     fn write(path: impl AsRef<Path>, content: &str) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");
@@ -2332,10 +2532,10 @@ sandbox_mode = "read-only"
 
     fn write_bytes(path: impl AsRef<Path>, content: &[u8]) {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                panic!("parent directory should be created: {error}");
-            }
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            panic!("parent directory should be created: {error}");
         }
         if let Err(error) = fs::write(path, content) {
             panic!("file should be written: {error}");
