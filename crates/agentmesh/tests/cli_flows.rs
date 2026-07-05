@@ -1162,7 +1162,12 @@ fn uninstall_removes_repository_state_after_cleaning_hooks() {
         "---\nname: remove\n---\nRemove skill.\n",
     );
     write(repo.join(".codex/.keep"), "");
-    assert_success(&run_agentmesh(&repo, &cache, &["--silent", "init", "-y"]));
+    assert_success(&run_agentmesh_with_env(
+        &repo,
+        &cache,
+        &["--silent", "init", "-y"],
+        &[("AGENTMESH_DISABLE_WATCHER_AUTOSTART", "1")],
+    ));
     assert!(repo.join(".ai").exists());
     assert!(repo.join("agentmesh.lock").exists());
     let agents_contents = read(repo.join("AGENTS.md"));
@@ -2144,7 +2149,8 @@ fn sync_check_reports_strict_capability_skip_details() {
     assert!(stdout.contains(
         "capability_skip runtime=codex entity=command:review type=command fallback=warn"
     ));
-    assert!(stdout.contains(".claude:commands/review.md"));
+    let claude_review_path = Path::new("commands").join("review.md");
+    assert!(stdout.contains(&format!(".claude:{}", claude_review_path.display())));
 }
 
 #[test]

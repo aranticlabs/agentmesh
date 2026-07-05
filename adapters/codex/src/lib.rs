@@ -1047,9 +1047,68 @@ fn merge_json_section(
             "JSON root must be an object",
         ));
     };
-    let merged = merge_json_section_value(existing_object.remove(section_key), replacement);
+    if section_key == "hooks"
+        && replacement
+            .as_object()
+            .is_some_and(|object| object.contains_key("PostToolUse"))
+    {
+        remove_codex_hook_entries_at_key(existing_object, "PostToolUse");
+    }
+    let merged = if section_key == "hooks" {
+        merge_codex_hooks_value(existing_object.remove(section_key), replacement)
+    } else {
+        merge_json_section_value(existing_object.remove(section_key), replacement)
+    };
     existing_object.insert(section_key.to_string(), merged);
     write_json_pretty(target, &existing)
+}
+
+fn merge_codex_hooks_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
+    match (existing, replacement) {
+        (Some(JsonValue::Object(mut existing)), JsonValue::Object(replacement)) => {
+            for (key, value) in replacement {
+                let merged = if key == "PostToolUse" {
+                    merge_codex_hook_entries(existing.remove(&key), value)
+                } else {
+                    merge_json_section_value(existing.remove(&key), value)
+                };
+                existing.insert(key, merged);
+            }
+            JsonValue::Object(existing)
+        }
+        (_, replacement) => replacement,
+    }
+}
+
+fn merge_codex_hook_entries(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
+    match (existing, replacement) {
+        (Some(JsonValue::Array(mut existing)), JsonValue::Array(replacement)) => {
+            existing.retain(|value| !json_contains_codex_hook(value));
+            JsonValue::Array(merge_json_arrays(existing, replacement))
+        }
+        (_, replacement) => replacement,
+    }
+}
+
+fn remove_codex_hook_entries_at_key(object: &mut serde_json::Map<String, JsonValue>, key: &str) {
+    if let Some(JsonValue::Array(entries)) = object.get_mut(key) {
+        entries.retain(|value| !json_contains_codex_hook(value));
+    }
+    if object
+        .get(key)
+        .is_some_and(|value| value.as_array().is_some_and(Vec::is_empty))
+    {
+        object.remove(key);
+    }
+}
+
+fn json_contains_codex_hook(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(value) => value.contains("codex-hook"),
+        JsonValue::Array(values) => values.iter().any(json_contains_codex_hook),
+        JsonValue::Object(values) => values.values().any(json_contains_codex_hook),
+        _ => false,
+    }
 }
 
 fn merge_json_section_value(existing: Option<JsonValue>, replacement: JsonValue) -> JsonValue {
@@ -2410,6 +2469,45 @@ sandbox_mode = "read-only"
         assert!(config.contains("approval_policy = \"never\""));
         assert!(config.contains("sandbox_mode = \"workspace-write\""));
         assert!(config.contains("model = \"gpt-5\""));
+    }
+
+    #[test]
+    fn emits_codex_hook_replaces_stale_managed_entries() {
+        let temp = match tempfile::tempdir() {
+            Ok(temp) => temp,
+            Err(error) => panic!("tempdir should be available: {error}"),
+        };
+        let root = temp.path();
+        write(
+            root.join(".codex/hooks.json"),
+            r#"{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"/old/agentmesh sync --trigger=codex-hook --silent"}]}],"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"/old/agentmesh sync --trigger=codex-hook --silent"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"echo user"}]}]}}"#,
+        );
+        let adapter = CodexAdapter;
+
+        adapter
+            .emit(EmitRequest {
+                runtime_dir: root.join(".codex"),
+                mode: RuntimeMode::Managed,
+                entities: vec![EmitEntity {
+                    id: "hook:codex-project".to_string(),
+                    entity_type: agentmesh_protocol::EntityType::Hook,
+                    scope: None,
+                    source_path: None,
+                    files: BTreeMap::from([(
+                        PathBuf::from("codex-project.json"),
+                        file(r#"{"hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"/new/agentmesh sync --trigger=codex-hook --silent"}]}]}}"#),
+                    )]),
+                    frontmatter: BTreeMap::new(),
+                    overrides: BTreeMap::new(),
+                }],
+            })
+            .unwrap_or_else(|error| panic!("emit should succeed: {error}"));
+
+        let hooks = read(root.join(".codex/hooks.json"));
+        assert!(!hooks.contains("/old/agentmesh"));
+        assert!(hooks.contains("/new/agentmesh"));
+        assert!(hooks.contains("echo user"));
+        assert_eq!(hooks.matches("codex-hook").count(), 1);
     }
 
     proptest! {
